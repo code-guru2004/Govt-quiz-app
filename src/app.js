@@ -11,7 +11,7 @@ app.use(
   cors({
     origin: [
       "http://localhost:3000", // frontend local
-      "https://test-easy-kappa.vercel.app/" // production later
+      "https://test-easy-kappa.vercel.app" // production later
     ],
     credentials: true
   })
