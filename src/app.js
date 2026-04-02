@@ -7,7 +7,15 @@ const adminRoutes = require("./routes/admin.route");
 const userRoutes = require("./routes/user.route");
 const app = express();
 
-app.use(cors());
+app.use(
+  cors({
+    origin: [
+      "http://localhost:3000", // frontend local
+      "https://test-easy-kappa.vercel.app/" // production later
+    ],
+    credentials: true
+  })
+);
 app.use(cookieParser()); // 🔥 MUST be before routes
 app.use(express.json());
 
