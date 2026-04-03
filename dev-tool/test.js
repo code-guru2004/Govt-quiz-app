@@ -30,15 +30,15 @@ data: {
 // create Test API test (Admin only)
 URL: http://localhost:3000/api/admin/tests [POST]
 data: {
-  "title": "Math Mock Test 1",
-  "description": "Basic arithmetic test",
-  "duration": 60,
+  "title": "JavaScript Mock Test",
+  "description": "Basic JS concepts test",
+  "duration": 30,
   "startTime": "2026-04-05T10:00:00.000Z",
-  "endTime": "2026-04-05T12:00:00.000Z",
+  "endTime": "2026-04-05T11:00:00.000Z",
   "maxAttempts": 2,
   "allowResume": true,
   "shuffleQuestions": true,
-  "showResultImmediately": true
+  "showResultImmediately": false
 }
 
 // Add Questions to Test API test (Admin only)

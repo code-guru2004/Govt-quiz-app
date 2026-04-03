@@ -24,7 +24,22 @@ const testSchema = new mongoose.Schema(
       type: Boolean,
       default: false
     },
-
+    maxAttempts: {
+      type: Number,
+      default: 1
+    },
+    allowResume: {
+      type: Boolean,
+      default: false
+    },
+    shuffleQuestions: {
+      type: Boolean,
+      default: false
+    },
+    showResultImmediately: {
+      type: Boolean,
+      default: false
+    },
     questions: [
       {
         type: mongoose.Schema.Types.ObjectId,

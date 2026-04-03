@@ -72,40 +72,62 @@ const createTest = async (req, res) => {
       showResultImmediately
     } = req.body;
 
-    // 🔥 Validation
+    // ✅ Validation
     if (!title || !duration || !startTime || !endTime) {
       return res.status(400).json({
+        success: false,
         msg: "Required fields missing"
+      });
+    }
+
+    if (duration <= 0) {
+      return res.status(400).json({
+        success: false,
+        msg: "Duration must be greater than 0"
       });
     }
 
     if (new Date(startTime) >= new Date(endTime)) {
       return res.status(400).json({
+        success: false,
         msg: "End time must be after start time"
       });
     }
 
-    // ✅ Create Test
+    // ✅ Determine status
+    let status = "scheduled";
+    const now = new Date();
+
+    if (now >= new Date(startTime) && now <= new Date(endTime)) {
+      status = "active";
+    } else if (now > new Date(endTime)) {
+      status = "completed";
+    }
+
+    // ✅ Create test
     const test = await Test.create({
       title,
       description,
       duration,
       startTime,
       endTime,
-      maxAttempts,
-      allowResume,
-      shuffleQuestions,
-      showResultImmediately,
-      createdBy: req.user.id
+      maxAttempts: maxAttempts || 1,
+      allowResume: allowResume ?? false,
+      shuffleQuestions: shuffleQuestions ?? false,
+      showResultImmediately: showResultImmediately ?? false,
+      createdBy: req.user.userId,
+      status
     });
 
     res.status(201).json({
+      success: true,
       msg: "Test created successfully",
       test
     });
 
   } catch (err) {
     res.status(500).json({
+      success: false,
       msg: err.message
     });
   }
