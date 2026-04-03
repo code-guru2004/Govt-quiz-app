@@ -27,7 +27,7 @@ async function registerUser(req, res){
 
     res.cookie("token", token, {
         httpOnly: true,
-        secure: true,
+        secure: process.env.NODE_ENV === "production",
         sameSite: "none",
         path: "/", // ✅ VERY IMPORTANT
         maxAge: 3 * 24 * 60 * 60 * 1000,
@@ -75,7 +75,7 @@ async function loginUser(req,res) {
 
     res.cookie("token", token, {
         httpOnly: true,
-        secure: true,
+        secure: process.env.NODE_ENV === "production",
         sameSite: "none",
         path: "/", // ✅ VERY IMPORTANT
         maxAge: 3 * 24 * 60 * 60 * 1000,
@@ -107,7 +107,7 @@ async function logoutUser(req,res) {
 
     res.clearCookie("token", {
         httpOnly: true,
-        secure: true,
+        secure: process.env.NODE_ENV === "production",
         sameSite: "none",
       });
 
