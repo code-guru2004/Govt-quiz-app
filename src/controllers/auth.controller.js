@@ -27,9 +27,10 @@ async function registerUser(req, res){
 
     res.cookie("token", token, {
         httpOnly: true,
-        secure: true,           // ✅ required on HTTPS (Render uses HTTPS)
-        sameSite: "none",       // ✅ required for cross-origin (frontend + backend different)
-        maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days
+        secure: true,
+        sameSite: "none",
+        path: "/", // ✅ VERY IMPORTANT
+        maxAge: 3 * 24 * 60 * 60 * 1000,
       });
 
     res.status(201).json({
@@ -74,9 +75,10 @@ async function loginUser(req,res) {
 
     res.cookie("token", token, {
         httpOnly: true,
-        secure: true,           // ✅ required on HTTPS (Render uses HTTPS)
-        sameSite: "none",       // ✅ required for cross-origin (frontend + backend different)
-        maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days
+        secure: true,
+        sameSite: "none",
+        path: "/", // ✅ VERY IMPORTANT
+        maxAge: 3 * 24 * 60 * 60 * 1000,
       });
 
     res.status(200).json({
