@@ -25,7 +25,12 @@ async function registerUser(req, res){
 
     const token = jwt.sign({userId: newUser._id}, process.env.JWT_SECRET,{expiresIn:"3d"});
 
-    res.cookie("token",token);
+    res.cookie("token", token, {
+        httpOnly: true,
+        secure: true,           // ✅ required on HTTPS (Render uses HTTPS)
+        sameSite: "none",       // ✅ required for cross-origin (frontend + backend different)
+        maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days
+      });
 
     res.status(201).json({
         success: true,
@@ -56,7 +61,7 @@ async function loginUser(req,res) {
         })
     }
 
-    const isCorrectPassword = user.comparePassword(password);
+    const isCorrectPassword = await user.comparePassword(password);
 
     if(!isCorrectPassword){
         return res.status(401).json({
@@ -67,7 +72,12 @@ async function loginUser(req,res) {
 
     const token = jwt.sign({userId: user._id},process.env.JWT_SECRET,{expiresIn: "3d"});
 
-    res.cookie("token",token);
+    res.cookie("token", token, {
+        httpOnly: true,
+        secure: true,           // ✅ required on HTTPS (Render uses HTTPS)
+        sameSite: "none",       // ✅ required for cross-origin (frontend + backend different)
+        maxAge: 3 * 24 * 60 * 60 * 1000, // 3 days
+      });
 
     res.status(200).json({
         success: true,
@@ -93,7 +103,12 @@ async function logoutUser(req,res) {
         });
     }
 
-    res.cookie("token","");
+    res.clearCookie("token", {
+        httpOnly: true,
+        secure: true,
+        sameSite: "none",
+      });
+
     await tokenBlackListModel.create({
         token: token
     });
