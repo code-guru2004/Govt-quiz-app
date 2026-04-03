@@ -302,11 +302,38 @@ const getAllTests = async (req, res) => {
     });
   }
 };
+
+
+// get individual test details
+const getIndividualTestDetails = async (req, res) => {
+  try {
+    const { testId } = req.params;
+    if (!testId) {
+      return res.status(400).json({ msg: "Test ID is required" });
+    }
+
+    const test = await Test.findById(testId).populate("questions");
+    if (!test) {
+      return res.status(404).json({ msg: "Test not found" });
+    }
+
+    res.json({
+      success: true,
+      test
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      msg: err.message
+    });
+  }
+};
 module.exports = {
   createQuestion,
   createTest,
   addQuestionsToTest,
   makeTestActive ,
   getQuestions,
-  getAllTests
+  getAllTests,
+  getIndividualTestDetails
 };
