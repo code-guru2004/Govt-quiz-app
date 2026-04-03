@@ -52,3 +52,7 @@ data: {
 
 // Make Test Active API test (Admin only)
 URL: http://localhost:3000/api/admin/tests/{testId}/activate [POST]
+
+
+// search Questions API test (Admin only)
+URL: http://localhost:3000/api/admin/get-questions?search=2%20%2B%202&subject=Math&topic=Arithmetic&page=1&limit=10 [GET]

@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 
-const { createQuestion, createTest, addQuestionsToTest, makeTestActive, getQuestions  } = require("../controllers/admin.controller");
+const { createQuestion, createTest, addQuestionsToTest, makeTestActive, getQuestions, getAllTests  } = require("../controllers/admin.controller");
 const authMiddleware = require("../middleware/auth.middleware");
 
 // 🔥 Only admin can access
@@ -33,5 +33,11 @@ router.post(
     "/get-questions",
     authMiddleware.adminMiddleware,
     getQuestions
+  );
+
+  router.get(
+    "/tests",
+    authMiddleware.adminMiddleware,
+    getAllTests
   );
 module.exports = router;

@@ -257,7 +257,6 @@ const getQuestions = async (req, res) => {
 
 
 
-
 const makeTestActive = async (req, res) => {
   try {
     const { testId } = req.params;
@@ -287,10 +286,27 @@ const makeTestActive = async (req, res) => {
 
 };
 
+const getAllTests = async (req, res) => {
+  try {
+    const tests = await Test.find().populate("questions", "questionText");
+    console.log("Tests found:", tests);
+    
+    res.json({
+      success: true,
+      tests
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
 module.exports = {
   createQuestion,
   createTest,
   addQuestionsToTest,
   makeTestActive ,
-  getQuestions 
+  getQuestions,
+  getAllTests
 };
