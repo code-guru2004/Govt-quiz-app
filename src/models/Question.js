@@ -33,13 +33,17 @@ const questionSchema = new mongoose.Schema(
     subject: {
         type: String,
         required: true,
-        index: true
+        index: true,
+        lowercase: true,
+        trim: true
       },
   
     topic: {
         type: String,
         required: true,
-        index: true
+        index: true,
+        lowercase: true,
+        trim: true,
       },
 
     marks: {
@@ -59,5 +63,7 @@ const questionSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+questionSchema.index({ questionText: "text" });
+questionSchema.index({ subject: 1, topic: 1 });
 
 module.exports = mongoose.model("Question", questionSchema);

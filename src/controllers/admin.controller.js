@@ -196,6 +196,68 @@ const addQuestionsToTest = async (req, res) => {
   }
 };
 
+// get questions of a test
+const getQuestions = async (req, res) => {
+  try {
+    let {
+      search = "",
+      subject,
+      topic,
+      page = 1,
+      limit = 10
+    } = req.query;
+
+    console.log("Query params:", req.query);
+
+    const pageNum = Number(page);
+    const limitNum = Number(limit);
+
+    let query = {};
+
+    // 🔍 Search
+    if (search) {
+      query.questionText = {
+        $regex: search,
+        $options: "i"
+      };
+    }
+
+    // 📚 Subject (FIXED)
+    if (subject) {
+      query.subject = subject.toLowerCase();
+    }
+
+    // 🧠 Topic (FIXED)
+    if (topic) {
+      query.topic = topic.toLowerCase();
+    }
+
+    const skip = (pageNum - 1) * limitNum;
+
+    const questions = await Question.find(query)
+      .select("-correctAnswer")
+      .skip(skip)
+      .limit(limitNum)
+      .sort({ createdAt: -1 });
+    console.log("Questions found:", questions);
+    const total = await Question.countDocuments(query);
+
+    res.json({
+      success: true,
+      total,
+      page: pageNum,
+      pages: Math.ceil(total / limitNum),
+      questions
+    });
+
+  } catch (err) {
+    res.status(500).json({ msg: err.message });
+  }
+};
+
+
+
+
 const makeTestActive = async (req, res) => {
   try {
     const { testId } = req.params;
@@ -229,5 +291,6 @@ module.exports = {
   createQuestion,
   createTest,
   addQuestionsToTest,
-  makeTestActive  
+  makeTestActive ,
+  getQuestions 
 };
