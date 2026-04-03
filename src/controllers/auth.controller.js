@@ -23,7 +23,10 @@ async function registerUser(req, res){
         mobile
     });
 
-    const token = jwt.sign({userId: newUser._id}, process.env.JWT_SECRET,{expiresIn:"3d"});
+    const token = jwt.sign({
+        userId: newUser._id,
+        role: newUser.role
+    }, process.env.JWT_SECRET,{expiresIn:"3d"});
 
     res.cookie("token", token, {
         httpOnly: true,
@@ -71,7 +74,10 @@ async function loginUser(req,res) {
         })
     }
 
-    const token = jwt.sign({userId: user._id},process.env.JWT_SECRET,{expiresIn: "3d"});
+    const token = jwt.sign({
+        userId: user._id,
+        role: user.role
+    },process.env.JWT_SECRET,{expiresIn: "3d"});
 
     res.cookie("token", token, {
         httpOnly: true,
