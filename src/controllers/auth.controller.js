@@ -93,6 +93,28 @@ async function loginUser(req,res) {
     })
 }
 
+// GET current user
+async function getMe(req, res) {
+    try {
+      const token = req.cookies.token || req.headers.authorization?.split(" ")[1];
+  
+      if (!token) {
+        return res.status(401).json({ success: false });
+      }
+  
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  
+      const user = await userModel.findById(decoded.userId).select("-password");
+  
+      res.json({
+        success: true,
+        user,
+      });
+    } catch (err) {
+      res.status(401).json({ success: false });
+    }
+  }
+
 
 // logout
 async function logoutUser(req,res) {
@@ -119,4 +141,4 @@ async function logoutUser(req,res) {
         message: "logout successful"
     });
 }
-module.exports = {registerUser, loginUser, logoutUser}
+module.exports = {registerUser, loginUser, logoutUser, getMe}
