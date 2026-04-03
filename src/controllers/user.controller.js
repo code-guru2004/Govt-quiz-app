@@ -1,8 +1,6 @@
 const Test = require("../models/Test");
 const Attempt = require("../models/Attempt");
 const Question = require("../models/Question");
-
-
 const getAvailableTests = async (req, res) => {
   try {
     const now = new Date();
@@ -27,7 +25,6 @@ const getAvailableTests = async (req, res) => {
     });
   }
 };
-
 
 const startTest = async (req, res) => {
   try {
@@ -131,8 +128,6 @@ const startTest = async (req, res) => {
   }
 };
 
-
-
 const pauseTest = async (req, res) => {
   try {
     const { attemptId } = req.params;
@@ -223,7 +218,6 @@ const resumeTest = async (req, res) => {
     }
 };
 
-
 const getAttemptQuestions = async (req, res) => {
   try {
     const { attemptId } = req.params;
@@ -285,7 +279,6 @@ const getAttemptQuestions = async (req, res) => {
     res.status(500).json({ msg: err.message });
   }
 };
-
 
 const saveAnswer = async (req, res) => {
   try {
@@ -534,4 +527,49 @@ const getLeaderboard = async (req, res) => {
     res.status(500).json({ msg: err.message });
   }
 };
-module.exports = { getAvailableTests , startTest, pauseTest, resumeTest, getAttemptQuestions, saveAnswer, submitTest, getDetailedResult, getLeaderboard};
+
+// get published tests for users
+const getPublishedTests = async (req, res) => {
+  try {
+    const tests = await Test.find({ isPublished: true }).populate("questions", "questionText");
+    console.log("Published tests found:", tests);
+
+    res.json({
+      success: true,
+      tests
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
+
+// get test by id for users
+const getTestById = async (req, res) => {
+  try {
+    const { testId } = req.params;
+
+    const test = await Test.findOne({ _id: testId, isPublished: true }).populate("questions", "questionText options");
+
+    if (!test) { 
+      return res.status(404).json({
+        success: false,
+        message: "Test not found"
+      });
+    }
+
+    res.json({
+      success: true,
+      test
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: err.message
+    });
+  }
+};
+
+module.exports = { getAvailableTests , startTest, pauseTest, resumeTest, getAttemptQuestions, saveAnswer, submitTest, getDetailedResult, getLeaderboard, getPublishedTests,getTestById};

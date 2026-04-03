@@ -1,7 +1,18 @@
 const express = require("express");
 const router = express.Router();
 
-const { getAvailableTests, startTest, pauseTest, resumeTest, getAttemptQuestions, saveAnswer, submitTest, getDetailedResult, getLeaderboard } = require("../controllers/user.controller"); 
+const { getAvailableTests,
+    startTest,
+    pauseTest,
+    resumeTest,
+    getAttemptQuestions, 
+    saveAnswer, 
+    submitTest, 
+    getDetailedResult, 
+    getLeaderboard, 
+    getPublishedTests,
+    getTestById
+ } = require("../controllers/user.controller");
 const authMiddleware = require("../middleware/auth.middleware");
 
 // 🔐 Only logged-in users
@@ -28,4 +39,10 @@ router.get("/attempts/:attemptId/result", authMiddleware.authMiddleware, getDeta
 
 // leaderboard route
 router.get("/tests/:testId/leaderboard", authMiddleware.authMiddleware, getLeaderboard);
+
+// get all published tests
+router.get("/tests/published", authMiddleware.authMiddleware, getPublishedTests);
+
+// get test by id
+router.get("/test/:testId", authMiddleware.authMiddleware, getTestById);
 module.exports = router;
