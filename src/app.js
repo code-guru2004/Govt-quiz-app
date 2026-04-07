@@ -5,6 +5,8 @@ const cookieParser = require("cookie-parser");
 const authRoutes = require("./routes/auth.route");
 const adminRoutes = require("./routes/admin.route");
 const userRoutes = require("./routes/user.route");
+const subjectRoutes = require("./routes/subject.route");
+const topicRoutes = require("./routes/topic.route"); 
 const app = express();
 
 app.use(
@@ -23,6 +25,8 @@ app.use(express.json());
 app.use("/api/auth", authRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/user", userRoutes);
+app.use("/api/subjects", subjectRoutes);
+app.use("/api/topics", topicRoutes);
 
 app.get("/", (req, res) => {
   res.send("API running...");

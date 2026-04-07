@@ -6,12 +6,12 @@ const questionSchema = new mongoose.Schema(
       type: String,
       required: true
     },
-    questionImage:{
-        type: String,
-        required: false
+    questionImage: {
+      type: String,
+      required: false
     },
     options: {
-        type: [{
+      type: [{
         type: String,
         required: true
       }],
@@ -31,20 +31,16 @@ const questionSchema = new mongoose.Schema(
     },
 
     subject: {
-        type: String,
-        required: true,
-        index: true,
-        lowercase: true,
-        trim: true
-      },
-  
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Subject",
+      required: true
+    },
+
     topic: {
-        type: String,
-        required: true,
-        index: true,
-        lowercase: true,
-        trim: true,
-      },
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Topic",
+      required: true
+    },
 
     marks: {
       type: Number,

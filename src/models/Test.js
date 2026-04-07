@@ -55,6 +55,31 @@ const testSchema = new mongoose.Schema(
         type: Date,
         required: true
       },
+       // 🔥 NEW FIELD
+    testType: {
+      type: String,
+      enum: ["topic", "subject", "full"],
+      required: true
+    },
+    // 🔥 OPTIONAL REFERENCES
+    subject: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Subject",
+      default: null
+    },
+
+    topic: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Topic",
+      default: null
+    },
+    // 🔥 For FULL TEST (multi subjects)
+    subjects: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Subject"
+      }
+    ],
 
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,

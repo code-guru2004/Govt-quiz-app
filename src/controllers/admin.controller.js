@@ -1,5 +1,8 @@
+const { default: mongoose } = require("mongoose");
 const Question = require("../models/Question");
+const subjectModel = require("../models/subject.model");
 const Test = require("../models/Test");
+const topicModel = require("../models/topic.model");
 
 const createQuestion = async (req, res) => {
   try {
@@ -12,25 +15,48 @@ const createQuestion = async (req, res) => {
       difficulty,
       marks,
       negativeMarks,
-      fact
+      fact,
     } = req.body;
 
     // 🔥 Basic validation
     if (!questionText || !options || !correctAnswer || !subject || !topic) {
       return res.status(400).json({
-        msg: "All required fields must be provided"
+        msg: "All required fields must be provided",
+      });
+    }
+
+    if (
+      !mongoose.Types.ObjectId.isValid(subject) ||
+      !mongoose.Types.ObjectId.isValid(topic)
+    ) {
+      return res.status(400).json({
+        msg: "Invalid subject or topic ID format",
+      });
+    }
+    const subjectExists = await subjectModel.findById(subject);
+    const topicExists = await topicModel.findById(topic);
+
+    if (!subjectExists || !topicExists) {
+      return res.status(400).json({
+        msg: "Invalid subject or topic",
+      });
+    }
+
+    if (topicExists.subject.toString() !== subject) {
+      return res.status(400).json({
+        msg: "Topic does not belong to selected subject",
       });
     }
 
     if (options.length < 2) {
       return res.status(400).json({
-        msg: "At least 2 options required"
+        msg: "At least 2 options required",
       });
     }
 
     if (!options.includes(correctAnswer)) {
       return res.status(400).json({
-        msg: "Correct answer must be one of the options"
+        msg: "Correct answer must be one of the options",
       });
     }
 
@@ -45,17 +71,16 @@ const createQuestion = async (req, res) => {
       marks,
       negativeMarks,
       fact,
-      createdBy: req.user.id
+      createdBy: req.user.id,
     });
 
     res.status(201).json({
       msg: "Question created successfully",
-      question
+      question,
     });
-
   } catch (err) {
     res.status(500).json({
-      msg: err.message
+      msg: err.message,
     });
   }
 };
@@ -71,39 +96,29 @@ const createTest = async (req, res) => {
       maxAttempts,
       allowResume,
       shuffleQuestions,
-      showResultImmediately
+      showResultImmediately,
     } = req.body;
 
     // ✅ Validation
     if (!title || !duration || !startTime || !endTime) {
       return res.status(400).json({
         success: false,
-        msg: "Required fields missing"
+        msg: "Required fields missing",
       });
     }
 
     if (duration <= 0) {
       return res.status(400).json({
         success: false,
-        msg: "Duration must be greater than 0"
+        msg: "Duration must be greater than 0",
       });
     }
 
     if (new Date(startTime) >= new Date(endTime)) {
       return res.status(400).json({
         success: false,
-        msg: "End time must be after start time"
+        msg: "End time must be after start time",
       });
-    }
-
-    // ✅ Determine status
-    let status = "scheduled";
-    const now = new Date();
-
-    if (now >= new Date(startTime) && now <= new Date(endTime)) {
-      status = "active";
-    } else if (now > new Date(endTime)) {
-      status = "completed";
     }
 
     // ✅ Create test
@@ -118,32 +133,32 @@ const createTest = async (req, res) => {
       shuffleQuestions: shuffleQuestions ?? false,
       showResultImmediately: showResultImmediately ?? false,
       createdBy: req.user.userId,
-      status
     });
 
     res.status(201).json({
       success: true,
       msg: "Test created successfully",
-      test
+      test,
     });
-
   } catch (err) {
     res.status(500).json({
       success: false,
-      msg: err.message
+      msg: err.message,
     });
   }
 };
-
 
 const addQuestionsToTest = async (req, res) => {
   try {
     const { testId } = req.params;
     const { questionIds } = req.body;
-
+    
+    if (!mongoose.Types.ObjectId.isValid(testId)) {
+      return res.status(400).json({ msg: "Invalid test ID" });
+    }
     if (!questionIds || !Array.isArray(questionIds)) {
       return res.status(400).json({
-        msg: "questionIds must be an array"
+        msg: "questionIds must be an array",
       });
     }
 
@@ -156,12 +171,12 @@ const addQuestionsToTest = async (req, res) => {
 
     // 🔍 Fetch valid questions
     const questions = await Question.find({
-      _id: { $in: questionIds }
+      _id: { $in: questionIds },
     });
 
     if (questions.length !== questionIds.length) {
       return res.status(400).json({
-        msg: "Some question IDs are invalid"
+        msg: "Some question IDs are invalid",
       });
     }
 
@@ -176,24 +191,25 @@ const addQuestionsToTest = async (req, res) => {
     test.questions.push(...newQuestionIds);
 
     // 🔥 Recalculate total marks
-    const totalMarks = questions.reduce(
-      (sum, q) => sum + (q.marks || 0),
-      test.totalMarks || 0
-    );
+    // recalculate from ALL questions in test
+    const allQuestions = await Question.find({
+      _id: { $in: test.questions },
+    });
 
-    test.totalMarks = totalMarks;
+    test.totalMarks = allQuestions.reduce((sum, q) => sum + (q.marks || 0), 0);
+
+    //test.totalMarks = totalMarks;
 
     await test.save();
 
     res.json({
       msg: "Questions added successfully",
       totalQuestions: test.questions.length,
-      totalMarks: test.totalMarks
+      totalMarks: test.totalMarks,
     });
-
   } catch (err) {
     res.status(500).json({
-      msg: err.message
+      msg: err.message,
     });
   }
 };
@@ -201,13 +217,7 @@ const addQuestionsToTest = async (req, res) => {
 // get questions of a test
 const getQuestions = async (req, res) => {
   try {
-    let {
-      search = "",
-      subject,
-      topic,
-      page = 1,
-      limit = 10
-    } = req.query;
+    let { search = "", subject, topic, page = 1, limit = 10 } = req.query;
 
     console.log("Query params:", req.query);
 
@@ -220,18 +230,18 @@ const getQuestions = async (req, res) => {
     if (search) {
       query.questionText = {
         $regex: search,
-        $options: "i"
+        $options: "i",
       };
     }
 
     // 📚 Subject (FIXED)
     if (subject) {
-      query.subject = subject.toLowerCase();
+      query.subject = subject;
     }
 
     // 🧠 Topic (FIXED)
     if (topic) {
-      query.topic = topic.toLowerCase();
+      query.topic = topic;
     }
 
     const skip = (pageNum - 1) * limitNum;
@@ -240,7 +250,9 @@ const getQuestions = async (req, res) => {
       .select("-correctAnswer")
       .skip(skip)
       .limit(limitNum)
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .populate("subject", "name")
+      .populate("topic", "name");
     console.log("Questions found:", questions);
     const total = await Question.countDocuments(query);
 
@@ -249,21 +261,18 @@ const getQuestions = async (req, res) => {
       total,
       page: pageNum,
       pages: Math.ceil(total / limitNum),
-      questions
+      questions,
     });
-
   } catch (err) {
     res.status(500).json({ msg: err.message });
   }
 };
 
-
-
 const makeTestActive = async (req, res) => {
   try {
     const { testId } = req.params;
-    
-    if(!testId){
+
+    if (!testId) {
       return res.status(400).json({ msg: "Test ID is required" });
     }
     const test = await Test.findById(testId);
@@ -272,39 +281,36 @@ const makeTestActive = async (req, res) => {
       return res.status(404).json({ msg: "Test not found" });
     }
 
-    test.isPublished= true;
+    test.isPublished = true;
     await test.save();
 
     res.json({
       msg: "Test is now active",
-      test
+      test,
     });
-
   } catch (err) {
     res.status(500).json({
-      msg: err.message
+      msg: err.message,
     });
   }
-
 };
 
 const getAllTests = async (req, res) => {
   try {
     const tests = await Test.find().populate("questions", "questionText");
     console.log("Tests found:", tests);
-    
+
     res.json({
       success: true,
-      tests
+      tests,
     });
   } catch (err) {
     res.status(500).json({
       success: false,
-      message: err.message
+      message: err.message,
     });
   }
 };
-
 
 // get individual test details
 const getIndividualTestDetails = async (req, res) => {
@@ -321,23 +327,22 @@ const getIndividualTestDetails = async (req, res) => {
 
     res.json({
       success: true,
-      test
+      test,
     });
   } catch (err) {
     res.status(500).json({
       success: false,
-      msg: err.message
+      msg: err.message,
     });
   }
 };
-
 
 module.exports = {
   createQuestion,
   createTest,
   addQuestionsToTest,
-  makeTestActive ,
+  makeTestActive,
   getQuestions,
   getAllTests,
-  getIndividualTestDetails
+  getIndividualTestDetails,
 };
