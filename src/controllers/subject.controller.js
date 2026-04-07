@@ -1,6 +1,4 @@
 const subjectModel = require("../models/subject.model");
-
-
 const createSubject = async (req, res) => {
   // Implementation for creating a subject
   try {
@@ -22,7 +20,6 @@ const createSubject = async (req, res) => {
     });
   }
 }
-
 const searchSubjects  = async (req, res) => {
     // Implementation for creating a topic
     try {
@@ -46,8 +43,6 @@ const searchSubjects  = async (req, res) => {
       });
     }
   }
-
-
 module.exports = {
     createSubject,
     searchSubjects
