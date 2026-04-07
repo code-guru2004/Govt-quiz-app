@@ -55,7 +55,11 @@ const questionSchema = new mongoose.Schema(
       type: Number,
       default: 0
     },
-
+    fact: {
+      type: String,
+      required: false,
+      default: ""
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User"
