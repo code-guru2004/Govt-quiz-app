@@ -11,7 +11,8 @@ const createQuestion = async (req, res) => {
       topic,
       difficulty,
       marks,
-      negativeMarks
+      negativeMarks,
+      fact
     } = req.body;
 
     // 🔥 Basic validation
@@ -43,6 +44,7 @@ const createQuestion = async (req, res) => {
       difficulty,
       marks,
       negativeMarks,
+      fact,
       createdBy: req.user.id
     });
 
