@@ -8,7 +8,13 @@ const testSchema = new mongoose.Schema(
       trim: true
     },
 
-    description: String,
+    description: {
+      type: String,
+      trim: true,
+      default: "",
+      minlength: 5,
+      maxlength: 500
+    },
 
     duration: {
       type: Number, // in minutes

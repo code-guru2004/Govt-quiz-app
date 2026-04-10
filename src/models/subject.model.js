@@ -12,6 +12,11 @@ const subjectSchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true
+    },
+    imageUrl: {
+      type: String,
+      default: "",
+      trim: true
     }
   },
   { timestamps: true }

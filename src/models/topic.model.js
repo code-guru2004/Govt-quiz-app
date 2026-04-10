@@ -15,6 +15,10 @@ const topicSchema = new mongoose.Schema(
       isActive: {
         type: Boolean,
         default: true
+      },
+      imageUrl: {
+        type: String,
+        default: null
       }
     },
     { timestamps: true }

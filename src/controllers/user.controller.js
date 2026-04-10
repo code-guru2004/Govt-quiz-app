@@ -1,28 +1,75 @@
 const Test = require("../models/Test");
 const Attempt = require("../models/Attempt");
 const Question = require("../models/Question");
+
 const getAvailableTests = async (req, res) => {
   try {
     const now = new Date();
+    const userId = req.user.id;
 
-    // 🔥 Only show active tests within schedule
     const tests = await Test.find({
       isPublished: true,
       startTime: { $lte: now },
       endTime: { $gte: now }
     })
-      .select("-questions") // don't send full question list
+      .select("-questions")
       .sort({ startTime: 1 });
 
+    // 🔥 Get all attempts of this user
+    const attempts = await Attempt.find({
+      user: userId,
+      test: { $in: tests.map(t => t._id) }
+    }).sort({ createdAt: -1 }); // latest first
+
+    // 🔥 Group attempts by test
+    const attemptMap = {};
+
+    attempts.forEach(a => {
+      const testId = a.test.toString();
+
+      if (!attemptMap[testId]) {
+        attemptMap[testId] = {
+          latest: a, // 🔥 latest attempt
+          count: 0
+        };
+      }
+
+      attemptMap[testId].count++;
+    });
+
+    // 🔥 Attach status
+    const result = tests.map(test => {
+      const data = attemptMap[test._id.toString()];
+
+      let userTestStatus = "not-attempted";
+      let attemptId = null;
+
+      if (data) {
+        const latest = data.latest;
+
+        attemptId = latest._id;
+
+        if (latest.status === "completed") {
+          userTestStatus = "completed";
+        } else {
+          userTestStatus = "in-progress"; // paused or in-progress
+        }
+      }
+
+      return {
+        ...test.toObject(),
+        attemptCount: data?.count || 0,
+        userTestStatus,
+        attemptId // 🔥 useful for resume
+      };
+    });
+
     res.json({
-      count: tests.length,
-      tests
-    }); 
+      tests: result
+    });
 
   } catch (err) {
-    res.status(500).json({
-      msg: err.message
-    });
+    res.status(500).json({ msg: err.message });
   }
 };
 
@@ -30,12 +77,10 @@ const startTest = async (req, res) => {
   try {
     const { testId } = req.params;
     const userId = req.user.id;
-
     const now = new Date();
 
     // 🔍 Get Test
     const test = await Test.findById(testId);
-
     if (!test) {
       return res.status(404).json({ msg: "Test not found" });
     }
@@ -53,27 +98,32 @@ const startTest = async (req, res) => {
       });
     }
 
-    // 🔁 Resume existing attempt
-    let existingAttempt = await Attempt.findOne({
-        user: userId,
-        test: testId,
-        status: { $ne: "completed" }
-      });
-      
-      if (existingAttempt) {
-        return res.status(400).json({
-          msg: "You must complete your previous attempt first",
-          attemptId: existingAttempt._id
-        });
-      }
-
-    // 🔢 Check max attempts
-    const attemptCount = await Attempt.countDocuments({
+    // 🔁 Resume existing attempt (MOST IMPORTANT)
+    const existingAttempt = await Attempt.findOne({
       user: userId,
-      test: testId
+      test: testId,
+      status: { $in: ["in-progress", "paused"] }
     });
 
-    if (attemptCount >= test.maxAttempts) {
+    if (existingAttempt) {
+      return res.status(200).json({
+        msg: "Resume existing attempt",
+        attemptId: existingAttempt._id,
+        resume: true
+      });
+    }
+
+    // 🔢 Count ONLY completed attempts
+    const completedAttempts = await Attempt.countDocuments({
+      user: userId,
+      test: testId,
+      status: "completed"
+    });
+
+    if (
+      test.maxAttempts !== -1 &&
+      completedAttempts >= test.maxAttempts
+    ) {
       return res.status(400).json({
         msg: "Maximum attempts reached"
       });
@@ -94,7 +144,7 @@ const startTest = async (req, res) => {
       timeSpent: 0
     }));
 
-    // ⏱️ Secure timer (backend controlled)
+    // ⏱️ Secure timer
     const expiresAt = new Date(
       now.getTime() + test.duration * 60 * 1000
     );
@@ -103,21 +153,20 @@ const startTest = async (req, res) => {
     const attempt = await Attempt.create({
       user: userId,
       test: testId,
-
       questions: attemptQuestions,
-
       totalQuestions: test.questions.length,
       totalMarks: test.totalMarks,
       negativeMarks: test.negativeMarks || 0,
       duration: test.duration,
-
       startedAt: now,
-      expiresAt
+      expiresAt,
+      status: "in-progress"
     });
 
     res.status(201).json({
       msg: "Test started successfully",
       attemptId: attempt._id,
+      resume: false,
       expiresAt
     });
 
@@ -547,23 +596,54 @@ const getPublishedTests = async (req, res) => {
 };
 
 // get test by id for users
+
 const getTestById = async (req, res) => {
   try {
     const { testId } = req.params;
+    const userId = req.user.id; // from auth middleware
 
-    const test = await Test.findOne({ _id: testId, isPublished: true }).populate("questions", "questionText options");
+    const test = await Test.findOne({
+      _id: testId,
+      isPublished: true
+    }).populate("questions", "questionText options");
 
-    if (!test) { 
+    if (!test) {
       return res.status(404).json({
         success: false,
         message: "Test not found"
       });
     }
 
+    // 🔥 Get all attempts of this user for this test
+    const attempts = await Attempt.find({ user: userId, test: testId });
+
+    const attemptCount = attempts.length;
+
+    // 🔥 Find active attempt (not submitted)
+    const activeAttempt = attempts.find(a => a.status === "in-progress");
+
+    let action = "start";
+
+    if (activeAttempt) {
+      action = "resume";
+    } else if (attemptCount > 0) {
+      action = "reattempt";
+    }
+
+    const canAttempt = attemptCount < test.maxAttempts;
+
     res.json({
       success: true,
-      test
+      test,
+      attemptInfo: {
+        attemptCount,
+        maxAttempts: test.maxAttempts,
+        canAttempt,
+        activeAttemptId: activeAttempt?._id || null,
+        action
+      }
     });
+
   } catch (err) {
     res.status(500).json({
       success: false,

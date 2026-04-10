@@ -56,3 +56,7 @@ URL: http://localhost:3000/api/admin/tests/{testId}/activate [POST]
 
 // search Questions API test (Admin only)
 URL: http://localhost:3000/api/admin/get-questions?search=2%20%2B%202&subject=Math&topic=Arithmetic&page=1&limit=10 [GET]
+
+// get tests by topic and subject API test (Authenticated users)
+// http://localhost:5000/api/tests/subject/69d7b5f1dd50e0f58134968f/topic/69d7be52dd50e0f58134975a
+

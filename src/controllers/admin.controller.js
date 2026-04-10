@@ -3,7 +3,7 @@ const Question = require("../models/Question");
 const subjectModel = require("../models/subject.model");
 const Test = require("../models/Test");
 const topicModel = require("../models/topic.model");
-
+const User = require("../models/User");
 const createQuestion = async (req, res) => {
   try {
     const {
@@ -97,10 +97,15 @@ const createTest = async (req, res) => {
       allowResume,
       shuffleQuestions,
       showResultImmediately,
+      testType,
+      subject,
+      topic,
+      subjects,
+      isPublished
     } = req.body;
 
-    // ✅ Validation
-    if (!title || !duration || !startTime || !endTime) {
+    // Basic validation
+    if (!title || !duration || !startTime || !endTime || !testType) {
       return res.status(400).json({
         success: false,
         msg: "Required fields missing",
@@ -114,24 +119,55 @@ const createTest = async (req, res) => {
       });
     }
 
-    if (new Date(startTime) >= new Date(endTime)) {
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+
+    if (start >= end) {
       return res.status(400).json({
         success: false,
         msg: "End time must be after start time",
       });
     }
 
-    // ✅ Create test
+    // Type-based validation
+    if (testType === "topic" && (!subject || !topic)) {
+      return res.status(400).json({
+        success: false,
+        msg: "Subject and topic required for topic test",
+      });
+    }
+
+    if (testType === "subject" && !subject) {
+      return res.status(400).json({
+        success: false,
+        msg: "Subject required for subject test",
+      });
+    }
+
+    if (testType === "full" && (!subjects || subjects.length === 0)) {
+      return res.status(400).json({
+        success: false,
+        msg: "At least one subject required for full test",
+      });
+    }
+
     const test = await Test.create({
       title,
       description,
       duration,
-      startTime,
-      endTime,
+      startTime: start,
+      endTime: end,
       maxAttempts: maxAttempts || 1,
       allowResume: allowResume ?? false,
       shuffleQuestions: shuffleQuestions ?? false,
       showResultImmediately: showResultImmediately ?? false,
+
+      testType,
+      subject: subject || null,
+      topic: topic || null,
+      subjects: subjects || [],
+      isPublished: isPublished ?? false,
+
       createdBy: req.user.userId,
     });
 
@@ -140,6 +176,7 @@ const createTest = async (req, res) => {
       msg: "Test created successfully",
       test,
     });
+
   } catch (err) {
     res.status(500).json({
       success: false,
@@ -217,31 +254,55 @@ const addQuestionsToTest = async (req, res) => {
 // get questions of a test
 const getQuestions = async (req, res) => {
   try {
-    let { search = "", subject, topic, page = 1, limit = 10 } = req.query;
+    let { search = "", page = 1, limit = 10, testId } = req.query;
 
-    console.log("Query params:", req.query);
+    if (!testId) {
+      return res.status(400).json({
+        success: false,
+        msg: "testId is required",
+      });
+    }
 
-    const pageNum = Number(page);
-    const limitNum = Number(limit);
+    const pageNum = Math.max(1, parseInt(page) || 1);
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit) || 10));
+
+    // 🔥 1. Get test
+    const test = await Test.findById(testId);
+
+    if (!test) {
+      return res.status(404).json({
+        success: false,
+        msg: "Test not found",
+      });
+    }
 
     let query = {};
 
-    // 🔍 Search
+    // 🚫 2. Exclude already added questions
+    if (test.questions.length > 0) {
+      query._id = { $nin: test.questions };
+    }
+
+    // 🎯 3. Apply test type filtering
+    if (test.testType === "topic") {
+      query.subject = test.subject;
+      query.topic = test.topic;
+    }
+
+    if (test.testType === "subject") {
+      query.subject = test.subject;
+    }
+
+    if (test.testType === "full") {
+      query.subject = { $in: test.subjects };
+    }
+
+    // 🔍 4. Search
     if (search) {
       query.questionText = {
         $regex: search,
         $options: "i",
       };
-    }
-
-    // 📚 Subject (FIXED)
-    if (subject) {
-      query.subject = subject;
-    }
-
-    // 🧠 Topic (FIXED)
-    if (topic) {
-      query.topic = topic;
     }
 
     const skip = (pageNum - 1) * limitNum;
@@ -253,7 +314,7 @@ const getQuestions = async (req, res) => {
       .sort({ createdAt: -1 })
       .populate("subject", "name")
       .populate("topic", "name");
-    console.log("Questions found:", questions);
+
     const total = await Question.countDocuments(query);
 
     res.json({
@@ -263,12 +324,16 @@ const getQuestions = async (req, res) => {
       pages: Math.ceil(total / limitNum),
       questions,
     });
+
   } catch (err) {
-    res.status(500).json({ msg: err.message });
+    res.status(500).json({
+      success: false,
+      msg: err.message,
+    });
   }
 };
 
-const makeTestActive = async (req, res) => {
+const makeTestStateChange = async (req, res) => {
   try {
     const { testId } = req.params;
 
@@ -281,11 +346,11 @@ const makeTestActive = async (req, res) => {
       return res.status(404).json({ msg: "Test not found" });
     }
 
-    test.isPublished = true;
+    test.isPublished = !test.isPublished;
     await test.save();
 
     res.json({
-      msg: "Test is now active",
+      msg: test.isPublished ? "Test is now public" : "Test is now private",
       test,
     });
   } catch (err) {
@@ -297,7 +362,7 @@ const makeTestActive = async (req, res) => {
 
 const getAllTests = async (req, res) => {
   try {
-    const tests = await Test.find().populate("questions", "questionText");
+    const tests = await Test.find().populate("questions", "questionText").sort({ createdAt: -1 });
     console.log("Tests found:", tests);
 
     res.json({
@@ -337,12 +402,85 @@ const getIndividualTestDetails = async (req, res) => {
   }
 };
 
+
+const removeQuestionFromTest = async (req, res) => {
+  try {
+    const { testId, questionId } = req.params;
+
+    const updatedTest = await Test.findByIdAndUpdate(
+      testId,
+      { $pull: { questions: questionId } },
+      { new: true }
+    );
+
+    if (!updatedTest) {
+      return res.status(404).json({
+        success: false,
+        msg: "Test not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      msg: "Question removed successfully",
+      questionsCount: updatedTest.questions.length,
+    });
+
+  } catch (err) {
+    res.status(500).json({ msg: err.message });
+  }
+};
+
+
+
+const getDashboardStats = async (req, res) => {
+  try {
+    const [
+      totalQuestions,
+      totalTests,
+      totalUsers,
+      totalPublishedTests,
+      totalSubjects,
+      totalTopics
+    ] = await Promise.all([
+      Question.countDocuments(),
+      Test.countDocuments(),
+      User.countDocuments(),
+      Test.countDocuments({ isPublished: true }),
+      subjectModel.countDocuments(),
+      topicModel.countDocuments()
+    ]);
+
+    res.json({
+      success: true,
+      stats: {
+        totalQuestions,
+        totalTests,
+        totalUsers,
+        totalPublishedTests,
+        totalSubjects,
+        totalTopics
+      }
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      msg: err.message
+    });
+  }
+};
+
+
+
 module.exports = {
   createQuestion,
   createTest,
   addQuestionsToTest,
-  makeTestActive,
+  makeTestStateChange,
   getQuestions,
   getAllTests,
   getIndividualTestDetails,
+  removeQuestionFromTest,
+  getDashboardStats
 };

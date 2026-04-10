@@ -71,7 +71,28 @@ const createTopic = async (req, res) => {
     }
   };
 
+  // get all topics for a subject
+  const getTopicsBySubject = async (req, res) => {
+    try {
+      const { subjectId } = req.params;
+
+      const topics = await topicModel.find({ subject: subjectId }).sort({createdAt: -1});
+
+      res.status(200).json({
+        success: true,
+        count: topics.length,
+        data: topics
+      });
+    }
+      catch (err) {
+        res.status(500).json({
+          success: false,
+          message: err.message
+        });
+      }
+  };
 module.exports = {
     createTopic,
-    searchTopics
+    searchTopics,
+    getTopicsBySubject
 }
