@@ -204,7 +204,6 @@ const addQuestionsToTest = async (req, res) => {
     if (!test) {
       return res.status(404).json({ msg: "Test not found" });
     }
-    console.log("Test found:", test);
 
     // 🔍 Fetch valid questions
     const questions = await Question.find({
@@ -363,7 +362,7 @@ const makeTestStateChange = async (req, res) => {
 const getAllTests = async (req, res) => {
   try {
     const tests = await Test.find().populate("questions", "questionText").sort({ createdAt: -1 });
-    console.log("Tests found:", tests);
+    
 
     res.json({
       success: true,

@@ -52,16 +52,21 @@ const testSchema = new mongoose.Schema(
         ref: "Question"
       }
     ],
+    // Add to your Test schema
+    isFeatured: {
+      type: Boolean,
+      default: false
+    },
     startTime: {
-        type: Date,
-        required: true
-      },
-      
-      endTime: {
-        type: Date,
-        required: true
-      },
-       // 🔥 NEW FIELD
+      type: Date,
+      required: true
+    },
+
+    endTime: {
+      type: Date,
+      required: true
+    },
+    // 🔥 NEW FIELD
     testType: {
       type: String,
       enum: ["topic", "subject", "full"],
@@ -97,5 +102,12 @@ const testSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+// In your Test schema
+testSchema.index({ testType: 1, isActive: 1, createdAt: -1 });
+testSchema.index({ testType: 1, subject: 1 });
+testSchema.index({ testType: 1, topic: 1 });
+testSchema.index({ testType: 1, difficulty: 1 });
+testSchema.index({ title: "text", description: "text" }); // For search
+
 
 module.exports = mongoose.model("Test", testSchema);

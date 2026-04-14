@@ -198,7 +198,6 @@ const startTest = async (req, res) => {
 const pauseTest = async (req, res) => {
   try {
     const { attemptId } = req.params;
-    console.log(attemptId)
     const attempt = await Attempt.findOne({
       _id: attemptId,
       user: req.user.id
@@ -587,7 +586,6 @@ const getLeaderboard = async (req, res) => {
 const getPublishedTests = async (req, res) => {
   try {
     const tests = await Test.find({ isPublished: true }).populate("questions", "questionText");
-    console.log("Published tests found:", tests);
 
     res.json({
       success: true,
@@ -1126,14 +1124,14 @@ const changePassword = async (req, res) => {
         message: "Current password is incorrect"
       });
     }
-    // const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{6,}$/;
-    // if (!passwordRegex.test(newPassword)) {
-    //   return res.status(400).json({
-    //     success: false,
-    //     message: "New password must be at least 8 characters long and contain both letters and numbers"
-    //   });
-    // }
-    console.log("Password change request for user:", user);
+    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{6,}$/;
+    if (!passwordRegex.test(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message: "New password must be at least 6 characters long and contain both letters and numbers"
+      });
+    }
+
     // Update password
     user.password = newPassword;
     await user.save();
