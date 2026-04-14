@@ -1,7 +1,31 @@
 const Test = require("../models/Test");
 const Attempt = require("../models/Attempt");
 const Question = require("../models/Question");
+const User = require("../models/User");
+const mongoose = require("mongoose");
+// utility fuction:
+const syncRemainingTime = (attempt) => {
+  if (
+    attempt.status === "in-progress" &&
+    attempt.lastResumedAt
+  ) {
+    const now = new Date();
+    const last = new Date(attempt.lastResumedAt);
 
+    // 🛑 Prevent duplicate sync in same time window
+    if (now <= last) return;
+
+    const timeSpent = Math.floor((now - last) / 1000);
+
+    if (timeSpent > 0) {
+      attempt.remainingTime -= timeSpent;
+      attempt.remainingTime = Math.max(0, attempt.remainingTime);
+
+      attempt.lastResumedAt = now; // ✅ checkpoint reset
+    }
+  }
+};
+// actual controllers
 const getAvailableTests = async (req, res) => {
   try {
     const now = new Date();
@@ -79,26 +103,19 @@ const startTest = async (req, res) => {
     const userId = req.user.id;
     const now = new Date();
 
-    // 🔍 Get Test
     const test = await Test.findById(testId);
     if (!test) {
       return res.status(404).json({ msg: "Test not found" });
     }
 
-    // ⛔ Check schedule
     if (now < test.startTime) {
-      return res.status(400).json({
-        msg: "Test has not started yet"
-      });
+      return res.status(400).json({ msg: "Test has not started yet" });
     }
 
     if (now > test.endTime) {
-      return res.status(400).json({
-        msg: "Test has already ended"
-      });
+      return res.status(400).json({ msg: "Test has already ended" });
     }
 
-    // 🔁 Resume existing attempt (MOST IMPORTANT)
     const existingAttempt = await Attempt.findOne({
       user: userId,
       test: testId,
@@ -106,34 +123,40 @@ const startTest = async (req, res) => {
     });
 
     if (existingAttempt) {
+      // ✅ ONLY ONE SYNC CALL
+      syncRemainingTime(existingAttempt);
+
+      if (existingAttempt.remainingTime <= 0) {
+        existingAttempt.status = "completed";
+      }
+
+      await existingAttempt.save();
+
       return res.status(200).json({
         msg: "Resume existing attempt",
         attemptId: existingAttempt._id,
-        resume: true
+        resume: true,
+        remainingTime: existingAttempt.remainingTime
       });
     }
 
-    // 🔢 Count ONLY completed attempts
     const completedAttempts = await Attempt.countDocuments({
       user: userId,
       test: testId,
       status: "completed"
     });
 
-    if (
-      test.maxAttempts !== -1 &&
-      completedAttempts >= test.maxAttempts
-    ) {
-      return res.status(400).json({
-        msg: "Maximum attempts reached"
-      });
+    if (test.maxAttempts !== -1 && completedAttempts >= test.maxAttempts) {
+      return res.status(400).json({ msg: "Maximum attempts reached" });
     }
 
-    // 📦 Prepare question snapshot
     let questionList = [...test.questions];
 
     if (test.shuffleQuestions) {
-      questionList.sort(() => Math.random() - 0.5);
+      for (let i = questionList.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [questionList[i], questionList[j]] = [questionList[j], questionList[i]];
+      }
     }
 
     const attemptQuestions = questionList.map((qId) => ({
@@ -144,12 +167,8 @@ const startTest = async (req, res) => {
       timeSpent: 0
     }));
 
-    // ⏱️ Secure timer
-    const expiresAt = new Date(
-      now.getTime() + test.duration * 60 * 1000
-    );
+    const durationInSeconds = test.duration * 60;
 
-    // ✅ Create Attempt
     const attempt = await Attempt.create({
       user: userId,
       test: testId,
@@ -159,7 +178,8 @@ const startTest = async (req, res) => {
       negativeMarks: test.negativeMarks || 0,
       duration: test.duration,
       startedAt: now,
-      expiresAt,
+      remainingTime: durationInSeconds,
+      lastResumedAt: now,
       status: "in-progress"
     });
 
@@ -167,17 +187,59 @@ const startTest = async (req, res) => {
       msg: "Test started successfully",
       attemptId: attempt._id,
       resume: false,
-      expiresAt
+      remainingTime: durationInSeconds
     });
 
   } catch (err) {
-    res.status(500).json({
-      msg: err.message
-    });
+    res.status(500).json({ msg: err.message });
   }
 };
 
 const pauseTest = async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+    console.log(attemptId)
+    const attempt = await Attempt.findOne({
+      _id: attemptId,
+      user: req.user.id
+    });
+
+    if (!attempt) {
+      return res.status(404).json({ msg: "Attempt not found" });
+    }
+
+    if (attempt.status !== "in-progress") {
+      return res.status(400).json({
+        msg: "Test is not running"
+      });
+    }
+
+    // ✅ ONLY ONE SYNC
+    syncRemainingTime(attempt);
+
+    if (attempt.remainingTime <= 0) {
+      attempt.status = "completed";
+      await attempt.save();
+
+      return res.status(400).json({ msg: "Time is over" });
+    }
+
+    attempt.status = "paused";
+    attempt.lastResumedAt = null; // 🔥 CRITICAL
+
+    await attempt.save();
+
+    res.json({
+      msg: "Test paused successfully",
+      remainingTime: attempt.remainingTime
+    });
+
+  } catch (err) {
+    res.status(500).json({ msg: err.message });
+  }
+};
+
+const resumeTest = async (req, res) => {
   try {
     const { attemptId } = req.params;
 
@@ -190,81 +252,36 @@ const pauseTest = async (req, res) => {
       return res.status(404).json({ msg: "Attempt not found" });
     }
 
-    if (attempt.status === "completed") {
+    if (attempt.status !== "paused") {
       return res.status(400).json({
-        msg: "Test already completed"
+        msg: "Test is not paused"
       });
     }
 
-    // ⏱️ Check if already expired
-    if (new Date() > attempt.expiresAt) {
+    if (attempt.remainingTime <= 0) {
       attempt.status = "completed";
       await attempt.save();
 
-      return res.status(400).json({
-        msg: "Time is over"
-      });
+      return res.status(400).json({ msg: "Time is over" });
     }
 
-    attempt.status = "paused";
+    // ❌ NO SYNC HERE (very important)
+
+    attempt.status = "in-progress";
+    attempt.lastResumedAt = new Date();
+
     await attempt.save();
 
     res.json({
-      msg: "Test paused successfully"
+      msg: "Resume test",
+      attemptId: attempt._id,
+      remainingTime: attempt.remainingTime,
+      currentQuestionIndex: attempt.currentQuestionIndex
     });
 
   } catch (err) {
     res.status(500).json({ msg: err.message });
   }
-};
-
-const resumeTest = async (req, res) => {
-    try {
-      const { attemptId } = req.params;
-  
-      const attempt = await Attempt.findOne({
-        _id: attemptId,
-        user: req.user.id
-      });
-  
-      if (!attempt) {
-        return res.status(404).json({ msg: "Attempt not found" });
-      }
-  
-      if (attempt.status === "completed") {
-        return res.status(400).json({
-          msg: "Test already completed"
-        });
-      }
-  
-      // ⏱️ Check expiry
-      if (new Date() > attempt.expiresAt) {
-        attempt.status = "completed";
-        await attempt.save();
-  
-        return res.status(400).json({
-          msg: "Time is over"
-        });
-      }
-  
-      attempt.status = "in-progress";
-      await attempt.save();
-  
-      // ⏳ Remaining time
-      const remainingTime = Math.floor(
-        (attempt.expiresAt - new Date()) / 1000
-      );
-  
-      res.json({
-        msg: "Resume test",
-        attemptId: attempt._id,
-        remainingTime,
-        currentQuestionIndex: attempt.currentQuestionIndex
-      });
-  
-    } catch (err) {
-      res.status(500).json({ msg: err.message });
-    }
 };
 
 const getAttemptQuestions = async (req, res) => {
@@ -280,24 +297,25 @@ const getAttemptQuestions = async (req, res) => {
       return res.status(404).json({ msg: "Attempt not found" });
     }
 
-    // ⏱️ Check expiry
-    if (new Date() > attempt.expiresAt) {
+    // ✅ SYNC TIME
+    syncRemainingTime(attempt);
+
+    // ⛔ Time over
+    if (attempt.remainingTime <= 0) {
       attempt.status = "completed";
       await attempt.save();
 
-      return res.status(400).json({
-        msg: "Time is over"
-      });
+      return res.status(400).json({ msg: "Time is over" });
     }
 
-    // 🔥 Fetch questions (without correctAnswer)
+    await attempt.save(); // save updated time
+
     const questionIds = attempt.questions.map(q => q.questionId);
 
     const questions = await Question.find({
       _id: { $in: questionIds }
     }).select("-correctAnswer");
 
-    // 🔁 Maintain order of questions
     const questionMap = {};
     questions.forEach(q => {
       questionMap[q._id] = q;
@@ -309,17 +327,13 @@ const getAttemptQuestions = async (req, res) => {
       isMarkedForReview: q.isMarkedForReview
     }));
 
-    // ⏳ Remaining time
-    const remainingTime = Math.max(
-      0,
-      Math.floor((attempt.expiresAt - new Date()) / 1000)
-    );
-
     res.json({
       attemptId: attempt._id,
+      userEmail: req.user.email,
+      userId: req.user.id,
       status: attempt.status,
       currentQuestionIndex: attempt.currentQuestionIndex,
-      remainingTime,
+      remainingTime: attempt.remainingTime, // ✅ FIXED
       totalQuestions: attempt.totalQuestions,
       questions: orderedQuestions
     });
@@ -336,7 +350,7 @@ const saveAnswer = async (req, res) => {
     const {
       questionId,
       selectedOption,
-      timeSpent, // seconds spent on this question
+      timeSpent,
       isMarkedForReview,
       currentQuestionIndex
     } = req.body;
@@ -350,14 +364,14 @@ const saveAnswer = async (req, res) => {
       return res.status(404).json({ msg: "Attempt not found" });
     }
 
-    // ⏱️ Check expiry
-    if (new Date() > attempt.expiresAt) {
+    // ✅ SYNC FIRST
+    syncRemainingTime(attempt);
+
+    if (attempt.remainingTime <= 0) {
       attempt.status = "completed";
       await attempt.save();
 
-      return res.status(400).json({
-        msg: "Time is over"
-      });
+      return res.status(400).json({ msg: "Time is over" });
     }
 
     if (attempt.status === "completed") {
@@ -366,18 +380,14 @@ const saveAnswer = async (req, res) => {
       });
     }
 
-    // 🔍 Find question in attempt
     const question = attempt.questions.find(
       (q) => q.questionId.toString() === questionId
     );
 
     if (!question) {
-      return res.status(400).json({
-        msg: "Invalid question"
-      });
+      return res.status(400).json({ msg: "Invalid question" });
     }
 
-    // ✅ Update fields
     if (selectedOption !== undefined) {
       question.selectedOption = selectedOption;
     }
@@ -387,19 +397,16 @@ const saveAnswer = async (req, res) => {
     }
 
     if (timeSpent) {
-      question.timeSpent += timeSpent; // accumulate
+      question.timeSpent += timeSpent;
     }
 
-    // 🔄 Update index
     if (currentQuestionIndex !== undefined) {
       attempt.currentQuestionIndex = currentQuestionIndex;
     }
 
     await attempt.save();
 
-    res.json({
-      msg: "Answer saved successfully"
-    });
+    res.json({ msg: "Answer saved successfully" });
 
   } catch (err) {
     res.status(500).json({ msg: err.message });
@@ -425,21 +432,22 @@ const submitTest = async (req, res) => {
       });
     }
 
-    // ⏱️ Force submit if time over
-    if (new Date() > attempt.expiresAt) {
+    // ✅ FINAL SYNC
+    syncRemainingTime(attempt);
+
+    if (attempt.remainingTime <= 0) {
       attempt.status = "completed";
     }
 
-    // 🔥 Get correct answers from DB
     const questionIds = attempt.questions.map(q => q.questionId);
 
     const questions = await Question.find({
-        _id: { $in: questionIds }
-      }).select("+correctAnswer");
+      _id: { $in: questionIds }
+    }).select("+correctAnswer");
 
     const questionMap = {};
     questions.forEach(q => {
-      questionMap[q._id] = q;
+      questionMap[q._id.toString()] = q;
     });
 
     let score = 0;
@@ -447,7 +455,6 @@ const submitTest = async (req, res) => {
     let wrongCount = 0;
     let unattempted = 0;
 
-    // 🧠 Evaluate answers
     attempt.questions.forEach(q => {
       const actualQuestion = questionMap[q.questionId];
 
@@ -467,7 +474,6 @@ const submitTest = async (req, res) => {
       }
     });
 
-    // ✅ Finalize attempt
     attempt.score = score;
     attempt.status = "completed";
     attempt.submittedAt = new Date();
@@ -620,7 +626,9 @@ const getTestById = async (req, res) => {
     const attemptCount = attempts.length;
 
     // 🔥 Find active attempt (not submitted)
-    const activeAttempt = attempts.find(a => a.status === "in-progress");
+    const activeAttempt = attempts.find(
+      a => a.status === "in-progress" || a.status === "paused"
+    );
 
     let action = "start";
 
@@ -630,7 +638,7 @@ const getTestById = async (req, res) => {
       action = "reattempt";
     }
 
-    const canAttempt = attemptCount < test.maxAttempts;
+    const canAttempt = test.maxAttempts === -1 || attemptCount < test.maxAttempts;
 
     res.json({
       success: true,
@@ -652,4 +660,512 @@ const getTestById = async (req, res) => {
   }
 };
 
-module.exports = { getAvailableTests , startTest, pauseTest, resumeTest, getAttemptQuestions, saveAnswer, submitTest, getDetailedResult, getLeaderboard, getPublishedTests,getTestById};
+const getMyResults = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 5;
+
+    const skip = (page - 1) * limit;
+
+    const results = await Attempt.aggregate([
+      {
+        $match: {
+          user: new mongoose.Types.ObjectId(userId),
+          status: "completed"
+        }
+      },
+    
+      { $sort: { submittedAt: -1 } },
+    
+      // 🔥 JOIN with Test collection
+      {
+        $lookup: {
+          from: "tests", // collection name (IMPORTANT: lowercase plural)
+          localField: "test",
+          foreignField: "_id",
+          as: "testData"
+        }
+      },
+    
+      { $unwind: "$testData" },
+    
+      {
+        $group: {
+          _id: "$test",
+          title: { $first: "$testData.title" }, // ✅ FIXED
+          attempts: {
+            $push: {
+              attemptId: "$_id",
+              score: "$score",
+              totalMarks: "$totalMarks",
+              submittedAt: "$submittedAt"
+            }
+          },
+          latestAttempt: { $first: "$submittedAt" }
+        }
+      },
+    
+      { $sort: { latestAttempt: -1 } },
+    
+      {
+        $facet: {
+          metadata: [{ $count: "total" }],
+          data: [{ $skip: skip }, { $limit: limit }]
+        }
+      }
+    ]);
+
+    const total = results[0].metadata[0]?.total || 0;
+
+    // ✅ Final formatting
+    const formatted = results[0].data.map(item => ({
+      testId: item._id,
+      title: item.title,
+      attempts: item.attempts
+    }));
+
+    res.json({
+      success: true,
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      data: formatted
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch results",
+      error: error.message
+    });
+  }
+};
+
+// Get complete user dashboard data
+const getUserDashboard = async (req, res) => {
+  try {
+    const userId = req.user.id; // From auth middleware
+
+    // 1. Fetch user personal details (exclude password)
+    const user = await User.findById(userId)
+      .select("-password")
+      .populate("bookmarks", "title description duration"); // Populate bookmarks if needed
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // 2. Fetch all test attempts with populated test details
+    const allAttempts = await Attempt.find({ user: userId, status: "completed" })
+      .populate({
+        path: "test",
+        select: "title description duration totalMarks subject topic",
+        populate: {
+          path: "subject topic",
+          select: "name"
+        }
+      })
+      .sort({ submittedAt: -1 }); // Most recent first
+
+    // 3. Latest 3 test attempts
+    const latestThreeAttempts = allAttempts.slice(0, 3);
+
+    // 4. Test statistics
+    const totalTestsAttempted = allAttempts.length;
+    
+    const testStats = {
+      totalTests: totalTestsAttempted,
+      totalScore: 0,
+      totalMarks: 0,
+      averageScore: 0,
+      bestScore: 0,
+      worstScore: Infinity,
+      subjectWiseStats: {},
+      passCount: 0,
+      failCount: 0
+    };
+
+    // Calculate statistics
+    let bestScore = 0;
+    let worstScore = Infinity;
+    let totalScoreSum = 0;
+    let totalMarksSum = 0;
+
+    allAttempts.forEach(attempt => {
+      const percentage = (attempt.score / attempt.totalMarks) * 100;
+      
+      totalScoreSum += attempt.score;
+      totalMarksSum += attempt.totalMarks;
+      
+      if (percentage > bestScore) bestScore = percentage;
+      if (percentage < worstScore) worstScore = percentage;
+      
+      // Count passes/fails (assuming 40% as passing mark)
+      if (percentage >= 40) {
+        testStats.passCount++;
+      } else {
+        testStats.failCount++;
+      }
+
+      // Subject-wise statistics
+      if (attempt.test && attempt.test.subject) {
+        const subjectName = attempt.test.subject.name;
+        if (!testStats.subjectWiseStats[subjectName]) {
+          testStats.subjectWiseStats[subjectName] = {
+            attempts: 0,
+            totalScore: 0,
+            totalMarks: 0,
+            averagePercentage: 0
+          };
+        }
+        testStats.subjectWiseStats[subjectName].attempts++;
+        testStats.subjectWiseStats[subjectName].totalScore += attempt.score;
+        testStats.subjectWiseStats[subjectName].totalMarks += attempt.totalMarks;
+        testStats.subjectWiseStats[subjectName].averagePercentage = 
+          (testStats.subjectWiseStats[subjectName].totalScore / 
+           testStats.subjectWiseStats[subjectName].totalMarks) * 100;
+      }
+    });
+
+    testStats.totalScore = totalScoreSum;
+    testStats.totalMarks = totalMarksSum;
+    testStats.averageScore = totalTestsAttempted > 0 
+      ? (totalScoreSum / totalMarksSum) * 100 
+      : 0;
+    testStats.bestScore = totalTestsAttempted > 0 ? bestScore : 0;
+    testStats.worstScore = totalTestsAttempted > 0 ? worstScore : 0;
+
+    // 5. Performance trend (last 5 tests percentage)
+    const performanceTrend = allAttempts.slice(0, 5).map(attempt => ({
+      date: attempt.submittedAt,
+      testName: attempt.test?.title || "Unknown Test",
+      percentage: (attempt.score / attempt.totalMarks) * 100,
+      score: attempt.score,
+      totalMarks: attempt.totalMarks
+    }));
+
+    // 6. Overall rank (optional)
+    let userRank = null;
+    if (totalTestsAttempted > 0) {
+      const allUsersStats = await Attempt.aggregate([
+        { $match: { status: "completed" } },
+        {
+          $group: {
+            _id: "$user",
+            totalScore: { $sum: "$score" },
+            totalMarks: { $sum: "$totalMarks" }
+          }
+        },
+        {
+          $project: {
+            averagePercentage: {
+              $multiply: [
+                { $divide: ["$totalScore", "$totalMarks"] },
+                100
+              ]
+            }
+          }
+        },
+        { $sort: { averagePercentage: -1 } }
+      ]);
+
+      const rankIndex = allUsersStats.findIndex(
+        stat => stat._id.toString() === userId
+      );
+      userRank = rankIndex !== -1 ? rankIndex + 1 : null;
+    }
+
+    // 7. Bookmarked tests count
+    const bookmarksCount = user.bookmarks?.length || 0;
+
+    // 8. Response data
+    const dashboardData = {
+      personalDetails: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        mobile: user.mobile,
+        role: user.role,
+        isVerified: user.isVerified,
+        createdAt: user.createdAt,
+        bookmarksCount: bookmarksCount
+      },
+      testStatistics: {
+        totalTestsAttempted,
+        averageScore: Math.round(testStats.averageScore * 100) / 100,
+        bestScore: Math.round(testStats.bestScore * 100) / 100,
+        worstScore: totalTestsAttempted > 0 ? Math.round(testStats.worstScore * 100) / 100 : 0,
+        totalScoreObtained: testStats.totalScore,
+        totalPossibleMarks: testStats.totalMarks,
+        passCount: testStats.passCount,
+        failCount: testStats.failCount,
+        successRate: totalTestsAttempted > 0 
+          ? Math.round((testStats.passCount / totalTestsAttempted) * 100) 
+          : 0,
+        subjectWiseStats: testStats.subjectWiseStats,
+        userRank: userRank
+      },
+      recentActivity: {
+        latestThreeTests: latestThreeAttempts.map(attempt => ({
+          testId: attempt.test?._id,
+          testName: attempt.test?.title || "Unknown Test",
+          subject: attempt.test?.subject?.name || "N/A",
+          topic: attempt.test?.topic?.name || "N/A",
+          score: attempt.score,
+          totalMarks: attempt.totalMarks,
+          percentage: Math.round((attempt.score / attempt.totalMarks) * 100),
+          submittedAt: attempt.submittedAt,
+          duration: attempt.duration
+        })),
+        performanceTrend: performanceTrend
+      },
+      totalBookmarks: bookmarksCount
+    };
+
+    res.status(200).json({
+      success: true,
+      data: dashboardData
+    });
+  } catch (error) {
+    console.error("Dashboard error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch user dashboard data",
+      error: error.message
+    });
+  }
+};
+
+// Get simplified user profile (for editing)
+const getUserProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const user = await User.findById(userId).select("-password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        mobile: user.mobile,
+        role: user.role,
+        isVerified: user.isVerified,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Update user profile
+const updateUserProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { name, mobile } = req.body;
+
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { name, mobile },
+      { new: true, runValidators: true }
+    ).select("-password");
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      data: updatedUser
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Get user's complete test history with pagination
+const getUserTestHistory = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { page = 1, limit = 10 } = req.query;
+    const skip = (page - 1) * limit;
+
+    const attempts = await Attempt.find({ user: userId, status: "completed" })
+      .populate({
+        path: "test",
+        select: "title description duration totalMarks subject topic",
+        populate: {
+          path: "subject topic",
+          select: "name"
+        }
+      })
+      .sort({ submittedAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    const totalCount = await Attempt.countDocuments({ 
+      user: userId, 
+      status: "completed" 
+    });
+
+    const formattedAttempts = attempts.map(attempt => ({
+      attemptId: attempt._id,
+      testId: attempt.test?._id,
+      testName: attempt.test?.title || "Unknown Test",
+      subject: attempt.test?.subject?.name || "N/A",
+      topic: attempt.test?.topic?.name || "N/A",
+      score: attempt.score,
+      totalMarks: attempt.totalMarks,
+      percentage: Math.round((attempt.score / attempt.totalMarks) * 100),
+      duration: attempt.duration,
+      submittedAt: attempt.submittedAt,
+      questionsAttempted: attempt.questions?.length || 0
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: formattedAttempts,
+      pagination: {
+        currentPage: parseInt(page),
+        totalPages: Math.ceil(totalCount / limit),
+        totalCount,
+        limit: parseInt(limit)
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// Get user statistics summary
+const getUserStats = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const [totalAttempts, bookmarksCount, user] = await Promise.all([
+      Attempt.countDocuments({ user: userId, status: "completed" }),
+      User.findById(userId).select("bookmarks"),
+      User.findById(userId).select("name email")
+    ]);
+
+    const recentActivity = await Attempt.find({ user: userId, status: "completed" })
+      .sort({ submittedAt: -1 })
+      .limit(1)
+      .select("submittedAt score totalMarks");
+
+    const lastActive = recentActivity[0]?.submittedAt || user.createdAt;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalTestsAttempted: totalAttempts,
+        totalBookmarks: bookmarksCount?.bookmarks?.length || 0,
+        lastActive: lastActive,
+        memberSince: user.createdAt
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// change password, forgot password, reset password controllers can also be added here
+// Change password
+const changePassword = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { currentPassword, newPassword } = req.body;
+
+    // Get user with password
+    const user = await User.findById(userId).select("+password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // Check current password
+    const isMatch = await user.comparePassword(currentPassword);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Current password is incorrect"
+      });
+    }
+    // const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{6,}$/;
+    // if (!passwordRegex.test(newPassword)) {
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: "New password must be at least 8 characters long and contain both letters and numbers"
+    //   });
+    // }
+    console.log("Password change request for user:", user);
+    // Update password
+    user.password = newPassword;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Password changed successfully"
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+module.exports = { 
+  getAvailableTests, 
+  startTest, 
+  pauseTest, 
+  resumeTest, 
+  getAttemptQuestions, 
+  saveAnswer, 
+  submitTest, 
+  getDetailedResult, 
+  getLeaderboard, 
+  getPublishedTests,
+  getTestById,
+  getMyResults,
+  getUserDashboard,
+  getUserProfile,
+  updateUserProfile,
+  getUserTestHistory,
+  getUserStats,
+  changePassword
+};

@@ -7,4 +7,9 @@ const testController = require("../controllers/test.controller");
 router.get("/subject/:subjectId/topic/:topicId", authMiddleware.authMiddleware, testController.getTestsByTopicAndSubject);
 //subject wise test list
 router.get("/subject/:subjectId", authMiddleware.authMiddleware, testController.getTestsBySubject); 
+// get all attempts
+router.get("/:testId/attempts", authMiddleware.authMiddleware, testController.getAttemptsByTest);
+
+// get result
+
 module.exports = router;

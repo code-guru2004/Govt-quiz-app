@@ -44,7 +44,13 @@ const userSchema = new mongoose.Schema(
     isVerified: {
       type: Boolean,
       default: false
-    }
+    },
+    bookmarks: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Test"
+      }
+    ]
   },
   { timestamps: true }
 );

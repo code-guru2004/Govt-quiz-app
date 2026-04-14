@@ -86,7 +86,10 @@ const testSchema = new mongoose.Schema(
         ref: "Subject"
       }
     ],
-
+    negativeMarks: {
+      type: Number,
+      default: 0
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User"
