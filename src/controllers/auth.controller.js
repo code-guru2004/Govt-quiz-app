@@ -103,7 +103,6 @@ async function loginUser(req,res) {
 async function getMe(req, res) {
     try {
       const token = req.cookies.token || req.headers.authorization?.split(" ")[1];
-  
       if (!token) {
         return res.status(401).json({ success: false });
       }
@@ -122,29 +121,42 @@ async function getMe(req, res) {
   }
 
 
-// logout
-async function logoutUser(req,res) {
-    const token = req.cookies.token || req.headers.authorization?.split(" ")[1];
-
-    if(!token){
+// logout controller backend
+async function logoutUser(req, res) {
+    try {
+      //console.log("Logout hit");
+  
+      const token =
+        req.cookies.token || req.headers.authorization?.split(" ")[1];
+  
+      //console.log("token logout:", token);
+  
+      if (!token) {
         return res.status(401).json({
-            success: false,
-            message: "No token provided"
+          success: false,
+          message: "No token provided",
         });
-    }
-
-    res.clearCookie("token", {
+      }
+  
+      res.clearCookie("token", {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "none",
       });
 
-    await tokenBlackListModel.create({
-        token: token
-    });
-    return res.status(200).json({
+  
+      await tokenBlackListModel.create({ token });
+  
+      return res.status(200).json({
+        success: true,
+        message: "logout successful",
+      });
+    } catch (error) {
+      console.error("Logout error:", error);
+      return res.status(500).json({
         success: false,
-        message: "logout successful"
-    });
-}
+        message: "Logout failed",
+      });
+    }
+  }
 module.exports = {registerUser, loginUser, logoutUser, getMe}
