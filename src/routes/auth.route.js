@@ -14,8 +14,14 @@ router.post('/register', authController.registerUser);
 router.post('/login',authController.loginUser);
 
 // get me
-router.get("/me",authMiddleware.authMiddleware,authController.getMe)
+router.get("/me",authMiddleware.authMiddleware,authController.getMe);
 // logout
-router.post("/logout",authController.logoutUser)
+router.post("/logout",authController.logoutUser);
+
+// resend otp
+router.post("/resend-otp",authMiddleware.authMiddleware,authController.resendOtp);
+// verify otp
+router.post("/verify-otp",authMiddleware.authMiddleware,authController.verifyOtp);
+
 
 module.exports = router;

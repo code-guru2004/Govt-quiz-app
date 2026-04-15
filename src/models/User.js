@@ -40,7 +40,22 @@ const userSchema = new mongoose.Schema(
       default: "user",
       
     },
-
+    otp: {
+      code: {
+        type: String,
+        select: false // 🔥 hide OTP
+      },
+      expiresAt: {
+        type: Date
+      }
+    },
+    otpAttempts: {
+      type: Number,
+      default: 0
+    },
+    otpLastSentAt: {
+      type: Date
+    },
     isVerified: {
       type: Boolean,
       default: false
