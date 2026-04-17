@@ -18,7 +18,8 @@ const { getAvailableTests,
     updateUserProfile,
     getUserTestHistory,
     getUserStats,
-    changePassword
+    changePassword,
+    getRemainingTime
 } = require("../controllers/user.controller");
 const authMiddleware = require("../middleware/auth.middleware");
 
@@ -64,4 +65,7 @@ router.get("/stats", authMiddleware.authMiddleware, getUserStats);              
 // change password
 router.put("/change-password",authMiddleware.authMiddleware, changePassword);
 
+
+// GET remaining time for an attempt
+router.get("/attempts/:attemptId/remaining-time", authMiddleware.authMiddleware, getRemainingTime)
 module.exports = router;

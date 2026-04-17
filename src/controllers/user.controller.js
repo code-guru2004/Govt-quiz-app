@@ -103,7 +103,7 @@ const startTest = async (req, res) => {
     const userId = req.user.id;
     const now = new Date();
 
-    const test = await Test.findById(testId);
+    const test = await Test.findById(testId).populate("questions", "questionText options correctAnswer marks");
     if (!test) {
       return res.status(404).json({ msg: "Test not found" });
     }
@@ -151,7 +151,7 @@ const startTest = async (req, res) => {
     }
 
     let questionList = [...test.questions];
-
+    
     if (test.shuffleQuestions) {
       for (let i = questionList.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -159,13 +159,16 @@ const startTest = async (req, res) => {
       }
     }
 
-    const attemptQuestions = questionList.map((qId) => ({
-      questionId: qId,
+    const attemptQuestions = questionList.map((question) => ({
+      questionId: question._id,
       selectedOption: null,
+      correctOption: question.correctAnswer, // 🔥 Store correct answer for later result calculation
       isCorrect: null,
       isMarkedForReview: false,
       timeSpent: 0
     }));
+
+    
 
     const durationInSeconds = test.duration * 60;
 
@@ -310,7 +313,7 @@ const getAttemptQuestions = async (req, res) => {
     await attempt.save(); // save updated time
 
     const questionIds = attempt.questions.map(q => q.questionId);
-
+    
     const questions = await Question.find({
       _id: { $in: questionIds }
     }).select("-correctAnswer");
@@ -348,22 +351,22 @@ const saveAnswer = async (req, res) => {
 
     const {
       questionId,
-      selectedOption,
+      selectedOption, // ✅ now option ID
       timeSpent,
       isMarkedForReview,
       currentQuestionIndex
     } = req.body;
-
+    
     const attempt = await Attempt.findOne({
       _id: attemptId,
       user: req.user.id
-    });
-
+    }).populate("questions.questionId", "options correctAnswer marks"); // 🔥 populate questions for validation
+    
     if (!attempt) {
       return res.status(404).json({ msg: "Attempt not found" });
     }
 
-    // ✅ SYNC FIRST
+    // ✅ SYNC TIMER
     syncRemainingTime(attempt);
 
     if (attempt.remainingTime <= 0) {
@@ -378,18 +381,39 @@ const saveAnswer = async (req, res) => {
         msg: "Test already submitted"
       });
     }
-
+    
+    //console.log(attempt.questions);
     const question = attempt.questions.find(
-      (q) => q.questionId.toString() === questionId
+      (q) => q.questionId._id.toString() === questionId
     );
 
     if (!question) {
       return res.status(400).json({ msg: "Invalid question" });
     }
-
+   
+    //✅ Validate selectedOption (OPTION ID)
     if (selectedOption !== undefined) {
+      const options = question.questionId.options;
+      const isValidOption = options.some(
+        (opt) => opt.id === selectedOption
+      );
+      
+      if (!isValidOption) {
+        return res.status(400).json({
+          msg: "Invalid option selected"
+        });
+      }
+    
       question.selectedOption = selectedOption;
+    
+      // 🔥 Optional: set correctness immediately
+      question.isCorrect =
+        question.questionId.correctAnswer === selectedOption;
     }
+
+    // if (selectedOption !== undefined) {
+    //   question.selectedOption = selectedOption;
+    // }
 
     if (isMarkedForReview !== undefined) {
       question.isMarkedForReview = isMarkedForReview;
@@ -495,6 +519,7 @@ const submitTest = async (req, res) => {
   }
 };
 
+// get detailed result of an attempt (with correct answers)
 const getDetailedResult = async (req, res) => {
   try {
     const { attemptId } = req.params;
@@ -519,13 +544,13 @@ const getDetailedResult = async (req, res) => {
 
     const questions = await Question.find({
       _id: { $in: questionIds }
-    });
+    }).select("+correctAnswer");
 
     const questionMap = {};
     questions.forEach(q => {
       questionMap[q._id] = q;
     });
-
+    
     const detailed = attempt.questions.map(q => {
       const actual = questionMap[q.questionId];
 
@@ -533,7 +558,7 @@ const getDetailedResult = async (req, res) => {
         questionId: q.questionId,
         questionText: actual.questionText,
         options: actual.options,
-
+        
         selectedOption: q.selectedOption,
         correctAnswer: actual.correctAnswer,
 
@@ -557,14 +582,66 @@ const getLeaderboard = async (req, res) => {
   try {
     const { testId } = req.params;
 
-    const leaderboard = await Attempt.find({
-      test: testId,
-      status: "completed"
-    })
-      .populate("user", "name email")
-      .sort({ score: -1, submittedAt: 1 }) // 🔥 tie breaker
-      .limit(50);
+    const leaderboard = await Attempt.aggregate([
+      {
+        $match: {
+          test: new mongoose.Types.ObjectId(testId),
+          status: "completed"
+        }
+      },
 
+      // 🔥 Sort so oldest attempt comes first
+      {
+        $sort: { submittedAt: 1 }
+      },
+
+      // 🔥 Group by user → pick FIRST attempt
+      {
+        $group: {
+          _id: "$user",
+          attempt: { $first: "$$ROOT" }
+        }
+      },
+
+      // 🔥 Replace root with attempt object
+      {
+        $replaceRoot: { newRoot: "$attempt" }
+      },
+
+      // 🔥 Now apply leaderboard ranking logic
+      {
+        $sort: { score: -1, submittedAt: 1 }
+      },
+
+      {
+        $limit: 50
+      },
+
+      // 🔥 Join user data
+      {
+        $lookup: {
+          from: "users",
+          localField: "user",
+          foreignField: "_id",
+          as: "user"
+        }
+      },
+      {
+        $unwind: "$user"
+      },
+
+      // 🔥 Final shape
+      {
+        $project: {
+          score: 1,
+          submittedAt: 1,
+          "user.name": 1,
+          "user.email": 1
+        }
+      }
+    ]);
+
+    // ✅ Add rank
     const result = leaderboard.map((a, index) => ({
       rank: index + 1,
       name: a.user.name,
@@ -573,9 +650,7 @@ const getLeaderboard = async (req, res) => {
       submittedAt: a.submittedAt
     }));
 
-    res.json({
-      leaderboard: result
-    });
+    res.json({ leaderboard: result });
 
   } catch (err) {
     res.status(500).json({ msg: err.message });
@@ -609,7 +684,7 @@ const getTestById = async (req, res) => {
     const test = await Test.findOne({
       _id: testId,
       isPublished: true
-    }).populate("questions", "questionText options");
+    }).populate("questions", "questionText options").populate("subject", "name").populate("topic", "name").populate("subjects", "name");
 
     if (!test) {
       return res.status(404).json({
@@ -1101,12 +1176,29 @@ const getUserStats = async (req, res) => {
 
 // change password, forgot password, reset password controllers can also be added here
 // Change password
+
 const changePassword = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user?.id;
     const { currentPassword, newPassword } = req.body;
 
-    // Get user with password
+    // ✅ Basic input validation
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Current password and new password are required"
+      });
+    }
+
+    // ✅ Validate MongoDB ObjectId
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user ID"
+      });
+    }
+
+    // ✅ Get user with password field
     const user = await User.findById(userId).select("+password");
 
     if (!user) {
@@ -1116,7 +1208,7 @@ const changePassword = async (req, res) => {
       });
     }
 
-    // Check current password
+    // ✅ Compare current password
     const isMatch = await user.comparePassword(currentPassword);
     if (!isMatch) {
       return res.status(401).json({
@@ -1124,29 +1216,75 @@ const changePassword = async (req, res) => {
         message: "Current password is incorrect"
       });
     }
-    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{6,}$/;
-    if (!passwordRegex.test(newPassword)) {
+
+    // ✅ Prevent same password reuse
+    const isSamePassword = await user.comparePassword(newPassword);
+    if (isSamePassword) {
       return res.status(400).json({
         success: false,
-        message: "New password must be at least 6 characters long and contain both letters and numbers"
+        message: "New password must be different from current password"
       });
     }
 
-    // Update password
+    // ✅ Strong password regex (production-ready)
+    const passwordRegex =
+      /^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&^()[\]{}\-_=+|;:'",.<>\/?\\]).{8,}$/;
+
+    if (!passwordRegex.test(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Password must be at least 8 characters long and include letters, numbers, and a special character"
+      });
+    }
+
+    // ✅ Update password (triggers pre-save hook for hashing)
     user.password = newPassword;
     await user.save();
 
-    res.status(200).json({
+    // ✅ Optional: remove password from response object
+    user.password = undefined;
+
+    return res.status(200).json({
       success: true,
       message: "Password changed successfully"
     });
   } catch (error) {
-    res.status(500).json({
+    console.error("Change Password Error:", error);
+
+    return res.status(500).json({
       success: false,
-      message: error.message
+      message: "Something went wrong"
     });
   }
 };
+
+// get remaining time for an in-progress attempt (optional, can be used for auto-saving or warning user about time)
+const getRemainingTime = async (req, res) => {
+  try {
+    const { attemptId } = req.params;
+    const attempt = await Attempt.findOne({
+      _id: attemptId,
+      user: req.user.id
+    });
+
+    if (!attempt) {
+      return res.status(404).json({ msg: "Attempt not found" });
+    }
+
+    // ✅ SYNC TIME
+    syncRemainingTime(attempt);
+    await attempt.save();
+
+    res.json({
+      remainingTime: attempt.remainingTime,
+      status: attempt.status
+    });
+  } catch (err) {
+    res.status(500).json({ msg: err.message });
+  }
+};
+
 module.exports = { 
   getAvailableTests, 
   startTest, 
@@ -1165,5 +1303,6 @@ module.exports = {
   updateUserProfile,
   getUserTestHistory,
   getUserStats,
-  changePassword
+  changePassword,
+  getRemainingTime
 };

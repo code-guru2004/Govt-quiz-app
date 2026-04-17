@@ -10,6 +10,8 @@ router.get("/subject/:subjectId", authMiddleware.authMiddleware, testController.
 // get all attempts
 router.get("/:testId/attempts", authMiddleware.authMiddleware, testController.getAttemptsByTest);
 
+// delete test by id---admin only
+router.delete("/:testId", authMiddleware.adminMiddleware, testController.deleteTestById);
 // get full-length tests with filters and user attempt status
 router.get("/full-length", authMiddleware.authMiddleware, testController.getFullLengthTests);
 router.get("/full-length/featured",authMiddleware.authMiddleware, testController.getFeaturedFullLengthTests);

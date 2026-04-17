@@ -8,7 +8,7 @@ const getAttemptResult = async (req, res) => {
 
     // 1. Fetch attempt
     const attempt = await Attempt.findById(attemptId)
-      .populate("test", "title totalMarks totalQuestions duration");
+      .populate("test", "title totalMarks totalQuestions duration").populate("test.questions","facts");
 
     if (!attempt) {
       return res.status(404).json({ message: "Attempt not found" });
@@ -40,7 +40,7 @@ const getAttemptResult = async (req, res) => {
 
     const detailedAnswers = attempt.questions.map(ans => {
       const q = questionMap[ans.questionId.toString()];
-
+    
       if (!ans.selectedOption) {
         skippedCount++;
       } else if (ans.isCorrect) {
@@ -48,7 +48,7 @@ const getAttemptResult = async (req, res) => {
       } else {
         wrongCount++;
       }
-
+    
       return {
         questionId: q?._id,
         questionText: q?.questionText,
@@ -56,7 +56,7 @@ const getAttemptResult = async (req, res) => {
         correctOption: q?.correctAnswer,
         selectedOption: ans.selectedOption,
         isCorrect: ans.isCorrect,
-        explanation: q?.explanation || null
+        fact: q?.fact || null   // 🔥 FIXED
       };
     });
 

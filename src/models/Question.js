@@ -1,27 +1,46 @@
 const mongoose = require("mongoose");
 
+// 🔥 Reusable multilingual field
+const multilingualString = {
+  en: { type: String, required: true },
+  hi: { type: String },
+  bn: { type: String }
+};
+
+// 🔥 Option schema (with unique ID for shuffle safety)
+const optionSchema = new mongoose.Schema(
+  {
+    id: {
+      type: String,
+      required: true // unique per question
+    },
+    en: { type: String, required: true },
+    hi: { type: String },
+    bn: { type: String }
+  },
+  { _id: false } // prevent extra _id for each option
+);
+
 const questionSchema = new mongoose.Schema(
   {
-    questionText: {
-      type: String,
-      required: true
-    },
+    // ✅ Multilingual Question
+    questionText: multilingualString,
+
     questionImage: {
-      type: String,
-      required: false
+      type: String
     },
+
+    // ✅ Options with ID (shuffle-safe)
     options: {
-      type: [{
-        type: String,
-        required: true
-      }],
+      type: [optionSchema],
       validate: [(arr) => arr.length >= 2, "At least 2 options required"]
     },
 
+    // ✅ Store correct option ID
     correctAnswer: {
       type: String,
       required: true,
-      select: false // 🔥 hide from frontend
+      select: false
     },
 
     difficulty: {
@@ -51,11 +70,14 @@ const questionSchema = new mongoose.Schema(
       type: Number,
       default: 0
     },
+
+    // ✅ Multilingual explanation / fact
     fact: {
-      type: String,
-      required: false,
-      default: ""
+      en: { type: String, default: "" },
+      hi: String,
+      bn: String
     },
+
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User"
@@ -63,7 +85,10 @@ const questionSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-questionSchema.index({ questionText: "text" });
+
+
+// 🔥 Indexes
+questionSchema.index({ "questionText.en": "text" }); // text search
 questionSchema.index({ subject: 1, topic: 1 });
 
 module.exports = mongoose.model("Question", questionSchema);

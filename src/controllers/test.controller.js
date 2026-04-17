@@ -1,7 +1,7 @@
 // get all tests for a topic and subject
 const Test = require("../models/Test");
-
 const Attempt = require("../models/Attempt");
+const mongoose = require("mongoose");
 
 const getTestsByTopicAndSubject = async (req, res) => {
   try {
@@ -232,7 +232,6 @@ const getAttemptsByTest = async (req, res) => {
   try {
     const { testId } = req.params;
     const userId = req.user.id;
-    console.log(testId);
 
     const attempts = await Attempt.find({
       user: userId,
@@ -734,7 +733,62 @@ const getTestFilterOptions = async (req, res) => {
   }
 };
 
+// DELETE TEST BY ID (ADMIN ONLY)
+const deleteTestById = async (req, res) => {
+  const session = await mongoose.startSession();
 
+  try {
+    const { testId } = req.params;
+
+    // ✅ Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(testId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid test ID"
+      });
+    }
+
+    session.startTransaction();
+
+    // ✅ Find test first (for auth check)
+    const test = await Test.findById(testId).session(session);
+
+    if (!test) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: "Test not found"
+      });
+    }
+    
+
+    // ✅ Delete test
+    await Test.findByIdAndDelete(testId, { session });
+
+    // ✅ Delete related attempts
+    await Attempt.deleteMany({ test: testId }, { session });
+
+    await session.commitTransaction();
+
+    res.status(200).json({
+      success: true,
+      message: "Test deleted successfully"
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+
+    console.error("Error deleting test:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to delete test"
+    });
+
+  } finally {
+    session.endSession(); // ✅ always close session
+  }
+};
 module.exports = {
   getTestsByTopicAndSubject,
   getTestsBySubject,
@@ -742,5 +796,6 @@ module.exports = {
   getFullLengthTests,
   getFullLengthTestById,
   getFeaturedFullLengthTests,
-  getTestFilterOptions
+  getTestFilterOptions,
+  deleteTestById
 };

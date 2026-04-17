@@ -170,7 +170,7 @@ async function logoutUser(req, res) {
 const resendOtp = async (req, res) => {
   try {
     const userId = req.user.id; // from auth middleware
-    console.log("Resend OTP for user ID:", userId);
+    console.log("Resend OTP hit for userId:", userId);
     const user = await userModel.findById(userId);
 
     if (!user) {
@@ -207,10 +207,6 @@ const resendOtp = async (req, res) => {
 
     await user.save();
 
-    // 📧 Send OTP (replace with your email/SMS service)
-    console.log("OTP:", otp);
-    // after generating OTP
-
     await sendEmail({
       to: user.email,
       subject: "Verify your account - OTP",
@@ -232,7 +228,6 @@ const verifyOtp = async (req, res) => {
   try {
     const userId = req.user.id;
     const { otp } = req.body;
-    console.log("Verifying OTP for user ID:", userId, "OTP:", otp);
     if (!otp) {
       return res.status(400).json({ message: "OTP is required" });
     }

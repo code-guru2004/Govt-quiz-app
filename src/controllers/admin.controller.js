@@ -4,12 +4,15 @@ const subjectModel = require("../models/subject.model");
 const Test = require("../models/Test");
 const topicModel = require("../models/topic.model");
 const User = require("../models/User");
+const { randomUUID } = require("crypto");
+
+// create question -- {DONE}
 const createQuestion = async (req, res) => {
   try {
     const {
-      questionText,
-      options,
-      correctAnswer,
+      questionText,   // { en, hi, bn }
+      options,        // [{ en, hi, bn }]
+      correctAnswer,  // can be index OR text (we'll convert)
       subject,
       topic,
       difficulty,
@@ -19,12 +22,19 @@ const createQuestion = async (req, res) => {
     } = req.body;
 
     // 🔥 Basic validation
-    if (!questionText || !options || !correctAnswer || !subject || !topic) {
+    if (!questionText?.en || !options || !subject || !topic) {
       return res.status(400).json({
-        msg: "All required fields must be provided",
+        msg: "Question (EN), options, subject, and topic are required",
       });
     }
 
+    if (!Array.isArray(options) || options.length < 2) {
+      return res.status(400).json({
+        msg: "At least 2 options required",
+      });
+    }
+
+    // 🔥 Validate subject & topic IDs
     if (
       !mongoose.Types.ObjectId.isValid(subject) ||
       !mongoose.Types.ObjectId.isValid(topic)
@@ -33,6 +43,7 @@ const createQuestion = async (req, res) => {
         msg: "Invalid subject or topic ID format",
       });
     }
+
     const subjectExists = await subjectModel.findById(subject);
     const topicExists = await topicModel.findById(topic);
 
@@ -48,23 +59,63 @@ const createQuestion = async (req, res) => {
       });
     }
 
-    if (options.length < 2) {
-      return res.status(400).json({
-        msg: "At least 2 options required",
-      });
+    // 🔥 Validate options (must have EN at least)
+    for (let opt of options) {
+      if (!opt.en) {
+        return res.status(400).json({
+          msg: "Each option must have at least English text",
+        });
+      }
     }
 
-    if (!options.includes(correctAnswer)) {
+    // 🔥 Generate option IDs
+    const optionsWithIds = options.map((opt) => ({
+      id: randomUUID(),
+      en: opt.en,
+      hi: opt.hi || "",
+      bn: opt.bn || "",
+    }));
+
+    // 🔥 Resolve correctAnswer → ID
+    let correctOptionId = null;
+
+    // CASE 1: correctAnswer is index
+    if (typeof correctAnswer === "number") {
+      if (correctAnswer < 0 || correctAnswer >= optionsWithIds.length) {
+        return res.status(400).json({
+          msg: "Invalid correctAnswer index",
+        });
+      }
+      correctOptionId = optionsWithIds[correctAnswer].id;
+    }
+
+    // CASE 2: correctAnswer is text (EN match)
+    else if (typeof correctAnswer === "string") {
+      const found = optionsWithIds.find(
+        (opt) => opt.en === correctAnswer
+      );
+
+      if (!found) {
+        return res.status(400).json({
+          msg: "Correct answer must match one of the option English texts",
+        });
+      }
+
+      correctOptionId = found.id;
+    }
+
+    // CASE 3: already ID (future safe)
+    else {
       return res.status(400).json({
-        msg: "Correct answer must be one of the options",
+        msg: "Invalid correctAnswer format",
       });
     }
 
     // ✅ Create question
     const question = await Question.create({
       questionText,
-      options,
-      correctAnswer,
+      options: optionsWithIds,
+      correctAnswer: correctOptionId,
       subject,
       topic,
       difficulty,
@@ -78,6 +129,7 @@ const createQuestion = async (req, res) => {
       msg: "Question created successfully",
       question,
     });
+
   } catch (err) {
     res.status(500).json({
       msg: err.message,
@@ -85,6 +137,7 @@ const createQuestion = async (req, res) => {
   }
 };
 
+// create test -- {DONE}
 const createTest = async (req, res) => {
   try {
     const {
@@ -185,11 +238,11 @@ const createTest = async (req, res) => {
   }
 };
 
+// add questions to test -- {DONE}
 const addQuestionsToTest = async (req, res) => {
   try {
     const { testId } = req.params;
     const { questionIds } = req.body;
-    
     if (!mongoose.Types.ObjectId.isValid(testId)) {
       return res.status(400).json({ msg: "Invalid test ID" });
     }
@@ -201,6 +254,7 @@ const addQuestionsToTest = async (req, res) => {
 
     // 🔍 Check test exists
     const test = await Test.findById(testId);
+    
     if (!test) {
       return res.status(404).json({ msg: "Test not found" });
     }
@@ -250,7 +304,7 @@ const addQuestionsToTest = async (req, res) => {
   }
 };
 
-// get questions of a test
+// get questions of a test with search and pagination -- {DONE}
 const getQuestions = async (req, res) => {
   try {
     let { search = "", page = 1, limit = 10, testId } = req.query;
@@ -332,6 +386,7 @@ const getQuestions = async (req, res) => {
   }
 };
 
+// make it public or private
 const makeTestStateChange = async (req, res) => {
   try {
     const { testId } = req.params;
@@ -362,7 +417,7 @@ const makeTestStateChange = async (req, res) => {
 const getAllTests = async (req, res) => {
   try {
     const tests = await Test.find().populate("questions", "questionText").sort({ createdAt: -1 });
-    
+
 
     res.json({
       success: true,
@@ -376,7 +431,7 @@ const getAllTests = async (req, res) => {
   }
 };
 
-// get individual test details
+// get individual test details -- {DONE}
 const getIndividualTestDetails = async (req, res) => {
   try {
     const { testId } = req.params;
@@ -384,7 +439,7 @@ const getIndividualTestDetails = async (req, res) => {
       return res.status(400).json({ msg: "Test ID is required" });
     }
 
-    const test = await Test.findById(testId).populate("questions");
+    const test = await Test.findById(testId).populate("questions").populate("subject", "name").populate("topic", "name").populate("subjects", "name");
     if (!test) {
       return res.status(404).json({ msg: "Test not found" });
     }
@@ -401,7 +456,7 @@ const getIndividualTestDetails = async (req, res) => {
   }
 };
 
-
+// remove question from test -- {DONE}
 const removeQuestionFromTest = async (req, res) => {
   try {
     const { testId, questionId } = req.params;
@@ -431,7 +486,7 @@ const removeQuestionFromTest = async (req, res) => {
 };
 
 
-
+// get dashboard stats -- {DONE}
 const getDashboardStats = async (req, res) => {
   try {
     const [

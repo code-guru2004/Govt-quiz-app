@@ -5,7 +5,7 @@ const jwt = require("jsonwebtoken");
 async function authMiddleware(req, res, next){
     try {
         const token = req.cookies.token || req.headers.authorization?.split(" ")[1]; // Get token from cookie or Authorization header
-
+        console.log("Auth middleware token:", token);
         if(!token){
             return res.status(401).json({
                 success: false,
