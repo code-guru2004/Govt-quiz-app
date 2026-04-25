@@ -5,7 +5,7 @@ const jwt = require("jsonwebtoken");
 async function authMiddleware(req, res, next){
     try {
         const token = req.cookies.token || req.headers.authorization?.split(" ")[1]; // Get token from cookie or Authorization header
-        console.log("Auth middleware token:", token);
+        
         if(!token){
             return res.status(401).json({
                 success: false,
@@ -68,6 +68,7 @@ async function adminMiddleware(req, res, next){
 
         // Check blacklist
         const isTokenExist = await tokenBlackListModel.findOne({ token });
+        //console.log("Admin middleware blacklist check:", isTokenExist);
         if(isTokenExist){
             return res.status(401).json({
                 success: false,
@@ -80,7 +81,7 @@ async function adminMiddleware(req, res, next){
         // ✅ FIX HERE
         const user = await userModel.findById(decoded.userId);
         
-        
+        //console.log("Admin middleware user check:", user);
         if(!user || user.role !== "admin"){
             return res.status(403).json({
                 success: false,
@@ -89,6 +90,7 @@ async function adminMiddleware(req, res, next){
         }
 
         req.user = user;
+        //console.log("Admin middleware user attached to request:", req.user);
         next();
 
     } catch (error) {

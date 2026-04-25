@@ -6,7 +6,7 @@ const subjectContoller = require("../controllers/subject.controller");
 // create subject - only admin
 router.post("/create",authMiddleware.adminMiddleware, subjectContoller.createSubject);
 // update subject - admin + normal user
-router.get("/search",authMiddleware.authMiddleware, subjectContoller.searchSubjects);
+router.get("/search",authMiddleware.authMiddleware, subjectContoller.searchSubjects); //🟢
 // get all subjects - for everyone
 router.get("/all",authMiddleware.authMiddleware, subjectContoller.getAllSubjects);
 // get all subjects with details (topics) - for everyone

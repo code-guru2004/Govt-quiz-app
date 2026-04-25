@@ -3,119 +3,304 @@ const Attempt = require("../models/Attempt");
 const Question = require("../models/Question");
 const User = require("../models/User");
 const mongoose = require("mongoose");
-// utility fuction:
-const syncRemainingTime = (attempt) => {
-  if (
-    attempt.status === "in-progress" &&
-    attempt.lastResumedAt
-  ) {
-    const now = new Date();
-    const last = new Date(attempt.lastResumedAt);
 
-    // 🛑 Prevent duplicate sync in same time window
-    if (now <= last) return;
+// utility function:
+// const syncRemainingTime = (attempt) => {
+//   if (attempt.status !== "in-progress") return;
+
+//   const now = new Date();
+
+//   // =========================
+//   // ✅ FLAT TEST
+//   // =========================
+//   if (!attempt.hasSections) {
+//     if (!attempt.lastResumedAt || attempt.remainingTime == null) return;
+
+//     const timeSpent = Math.floor((now - attempt.lastResumedAt) / 1000);
+
+//     if (timeSpent > 0) {
+//       attempt.remainingTime = Math.max(
+//         0,
+//         attempt.remainingTime - timeSpent
+//       );
+
+//       attempt.lastResumedAt = now;
+//     }
+
+//     // 🏁 AUTO COMPLETE
+//     if (attempt.remainingTime === 0) {
+//       attempt.status = "completed";
+//       attempt.submittedAt = now;
+//     }
+//   }
+
+//   // =========================
+//   // ✅ SECTION TEST (STRICT)
+//   // =========================
+//   else {
+//     const currentIndex = attempt.currentSectionIndex;
+
+//     const sectionTimer = attempt.sectionRemainingTime.find(
+//       (s) => s.sectionIndex === currentIndex
+//     );
+
+//     const sectionData = attempt.sections.find(
+//       (s) => s.sectionIndex === currentIndex
+//     );
+
+//     if (!sectionTimer || !sectionData) return;
+
+//     const last = sectionTimer.lastUpdatedAt || attempt.lastResumedAt;
+//     if (!last) return;
+
+//     const timeSpent = Math.floor((now - last) / 1000);
+
+//     if (timeSpent > 0) {
+//       sectionTimer.remainingTime = Math.max(
+//         0,
+//         sectionTimer.remainingTime - timeSpent
+//       );
+
+//       // 🔥 ONLY update section timer (NOT both)
+//       sectionTimer.lastUpdatedAt = now;
+//     }
+
+//     // =========================
+//     // 🔒 LOCK + MOVE
+//     // =========================
+//     if (sectionTimer.remainingTime === 0 && !sectionData.sectionLocked) {
+//       sectionData.sectionLocked = true;
+//       sectionData.completedAt = now;
+
+//       const nextSection = attempt.sections.find(
+//         (s) =>
+//           s.sectionIndex > currentIndex &&
+//           !s.sectionLocked
+//       );
+
+//       if (nextSection) {
+//         attempt.currentSectionIndex = nextSection.sectionIndex;
+//         attempt.currentQuestionIndex = 0;
+
+//         const nextTimer = attempt.sectionRemainingTime.find(
+//           (s) => s.sectionIndex === nextSection.sectionIndex
+//         );
+
+//         if (nextTimer) {
+//           nextTimer.lastUpdatedAt = now;
+//         }
+//       } else {
+//         // 🏁 COMPLETE TEST
+//         attempt.status = "completed";
+//         attempt.submittedAt = now;
+//       }
+//     }
+//   }
+// };
+
+// Add this helper function to calculate results
+const calculateAttemptResults = (attempt) => {
+  let totalScore = 0;
+  let correctCount = 0;
+  let wrongCount = 0;
+  let unattempted = 0;
+  let sectionResults = [];
+
+  if (!attempt.hasSections) {
+    // Flat test calculation
+    attempt.questions.forEach(q => {
+      if (!q.selectedOption) {
+        unattempted++;
+      } else if (q.isCorrect) {
+        correctCount++;
+      } else {
+        wrongCount++;
+      }
+      totalScore += q.marksObtained || 0;
+    });
+  } else {
+    // Sectional test calculation
+    attempt.sections.forEach(section => {
+      let sectionScore = 0;
+      let sectionCorrect = 0;
+      let sectionWrong = 0;
+      let sectionUnattempted = 0;
+
+      section.questions.forEach(q => {
+        if (!q.selectedOption) {
+          sectionUnattempted++;
+        } else if (q.isCorrect) {
+          sectionCorrect++;
+        } else {
+          sectionWrong++;
+        }
+        sectionScore += q.marksObtained || 0;
+      });
+
+      totalScore += sectionScore;
+      correctCount += sectionCorrect;
+      wrongCount += sectionWrong;
+      unattempted += sectionUnattempted;
+
+      sectionResults.push({
+        sectionIndex: section.sectionIndex,
+        sectionTitle: section.sectionTitle,
+        score: sectionScore,
+        correct: sectionCorrect,
+        wrong: sectionWrong,
+        unattempted: sectionUnattempted,
+        totalQuestions: section.questions.length
+      });
+    });
+  }
+
+  // Update attempt with results
+  attempt.score = totalScore;
+  attempt.correctAnswers = correctCount;
+  attempt.wrongAnswers = wrongCount;
+  attempt.unattempted = unattempted;
+  
+  return { totalScore, correctCount, wrongCount, unattempted, sectionResults };
+};
+
+// Updated syncRemainingTime function
+const syncRemainingTime = (attempt) => {
+  if (attempt.status !== "in-progress") return;
+
+  const now = new Date();
+
+  // =========================
+  // ✅ FLAT TEST
+  // =========================
+  if (!attempt.hasSections) {
+    if (!attempt.lastResumedAt || attempt.remainingTime == null) return;
+
+    const timeSpent = Math.floor((now - attempt.lastResumedAt) / 1000);
+
+    if (timeSpent > 0) {
+      attempt.remainingTime = Math.max(
+        0,
+        attempt.remainingTime - timeSpent
+      );
+
+      attempt.lastResumedAt = now;
+    }
+
+    // 🏁 AUTO COMPLETE - NOW WITH RESULTS CALCULATION
+    if (attempt.remainingTime === 0) {
+      attempt.status = "completed";
+      attempt.submittedAt = now;
+      // 🔥 Calculate results when time expires
+      calculateAttemptResults(attempt);
+    }
+  }
+
+  // =========================
+  // ✅ SECTION TEST (STRICT)
+  // =========================
+  else {
+    const currentIndex = attempt.currentSectionIndex;
+
+    const sectionTimer = attempt.sectionRemainingTime.find(
+      (s) => s.sectionIndex === currentIndex
+    );
+
+    const sectionData = attempt.sections.find(
+      (s) => s.sectionIndex === currentIndex
+    );
+
+    if (!sectionTimer || !sectionData) return;
+
+    const last = sectionTimer.lastUpdatedAt || attempt.lastResumedAt;
+    if (!last) return;
 
     const timeSpent = Math.floor((now - last) / 1000);
 
     if (timeSpent > 0) {
-      attempt.remainingTime -= timeSpent;
-      attempt.remainingTime = Math.max(0, attempt.remainingTime);
+      sectionTimer.remainingTime = Math.max(
+        0,
+        sectionTimer.remainingTime - timeSpent
+      );
 
-      attempt.lastResumedAt = now; // ✅ checkpoint reset
+      // 🔥 ONLY update section timer (NOT both)
+      sectionTimer.lastUpdatedAt = now;
+    }
+
+    // =========================
+    // 🔒 LOCK + MOVE
+    // =========================
+    if (sectionTimer.remainingTime === 0 && !sectionData.sectionLocked) {
+      sectionData.sectionLocked = true;
+      sectionData.completedAt = now;
+
+      const nextSection = attempt.sections.find(
+        (s) =>
+          s.sectionIndex > currentIndex &&
+          !s.sectionLocked
+      );
+
+      if (nextSection) {
+        attempt.currentSectionIndex = nextSection.sectionIndex;
+        attempt.currentQuestionIndex = 0;
+
+        const nextTimer = attempt.sectionRemainingTime.find(
+          (s) => s.sectionIndex === nextSection.sectionIndex
+        );
+
+        if (nextTimer) {
+          nextTimer.lastUpdatedAt = now;
+        }
+      } else {
+        // 🏁 COMPLETE TEST - NOW WITH RESULTS CALCULATION
+        attempt.status = "completed";
+        attempt.submittedAt = now;
+        // 🔥 Calculate results when all sections are completed
+        calculateAttemptResults(attempt);
+      }
     }
   }
 };
-// actual controllers
-const getAvailableTests = async (req, res) => {
-  try {
-    const now = new Date();
-    const userId = req.user.id;
-
-    const tests = await Test.find({
-      isPublished: true,
-      startTime: { $lte: now },
-      endTime: { $gte: now }
-    })
-      .select("-questions")
-      .sort({ startTime: 1 });
-
-    // 🔥 Get all attempts of this user
-    const attempts = await Attempt.find({
-      user: userId,
-      test: { $in: tests.map(t => t._id) }
-    }).sort({ createdAt: -1 }); // latest first
-
-    // 🔥 Group attempts by test
-    const attemptMap = {};
-
-    attempts.forEach(a => {
-      const testId = a.test.toString();
-
-      if (!attemptMap[testId]) {
-        attemptMap[testId] = {
-          latest: a, // 🔥 latest attempt
-          count: 0
-        };
-      }
-
-      attemptMap[testId].count++;
-    });
-
-    // 🔥 Attach status
-    const result = tests.map(test => {
-      const data = attemptMap[test._id.toString()];
-
-      let userTestStatus = "not-attempted";
-      let attemptId = null;
-
-      if (data) {
-        const latest = data.latest;
-
-        attemptId = latest._id;
-
-        if (latest.status === "completed") {
-          userTestStatus = "completed";
-        } else {
-          userTestStatus = "in-progress"; // paused or in-progress
-        }
-      }
-
-      return {
-        ...test.toObject(),
-        attemptCount: data?.count || 0,
-        userTestStatus,
-        attemptId // 🔥 useful for resume
-      };
-    });
-
-    res.json({
-      tests: result
-    });
-
-  } catch (err) {
-    res.status(500).json({ msg: err.message });
-  }
-};
-
+ 
+/**
+ * =================================================================================
+ * Main controllers
+ * =========================================================
+ */
 const startTest = async (req, res) => {
   try {
     const { testId } = req.params;
     const userId = req.user.id;
     const now = new Date();
 
-    const test = await Test.findById(testId).populate("questions", "questionText options correctAnswer marks");
+    const test = await Test.findById(testId)
+      .populate("questions", "_id marks")  // Include marks field
+      .populate("sections.questions", "_id marks")  // Include marks for section questions
+      .lean();
+
     if (!test) {
       return res.status(404).json({ msg: "Test not found" });
     }
 
-    if (now < test.startTime) {
-      return res.status(400).json({ msg: "Test has not started yet" });
+    if (!test.isPublished) {
+      return res.status(400).json({ msg: "Test not published yet" });
     }
 
-    if (now > test.endTime) {
-      return res.status(400).json({ msg: "Test has already ended" });
+    if (!test.hasSections && (!test.duration || test.duration <= 0)) {
+      return res.status(400).json({ msg: "Invalid test duration" });
     }
 
+    if (test.scheduleType === "one-time") {
+      if (now < test.startTime) {
+        return res.status(400).json({ msg: "Test not started" });
+      }
+      if (now > test.endTime) {
+        return res.status(400).json({ msg: "Test ended" });
+      }
+    }
+
+    // =========================
+    // 🔁 EXISTING ATTEMPT
+    // =========================
     const existingAttempt = await Attempt.findOne({
       user: userId,
       test: testId,
@@ -123,23 +308,26 @@ const startTest = async (req, res) => {
     });
 
     if (existingAttempt) {
-      // ✅ ONLY ONE SYNC CALL
       syncRemainingTime(existingAttempt);
-
-      if (existingAttempt.remainingTime <= 0) {
-        existingAttempt.status = "completed";
-      }
-
       await existingAttempt.save();
 
-      return res.status(200).json({
-        msg: "Resume existing attempt",
+      return res.status(400).json({
+        msg: "Attempt already in progress",
         attemptId: existingAttempt._id,
         resume: true,
-        remainingTime: existingAttempt.remainingTime
+        status: existingAttempt.status,
+        hasSections: existingAttempt.hasSections,
+        remainingTime: existingAttempt.hasSections
+          ? existingAttempt.sectionRemainingTime
+          : existingAttempt.remainingTime,
+        currentSectionIndex: existingAttempt.currentSectionIndex,
+        currentQuestionIndex: existingAttempt.currentQuestionIndex
       });
     }
 
+    // =========================
+    // 🚫 ATTEMPT LIMIT
+    // =========================
     const completedAttempts = await Attempt.countDocuments({
       user: userId,
       test: testId,
@@ -147,53 +335,110 @@ const startTest = async (req, res) => {
     });
 
     if (test.maxAttempts !== -1 && completedAttempts >= test.maxAttempts) {
-      return res.status(400).json({ msg: "Maximum attempts reached" });
+      return res.status(400).json({
+        msg: "Maximum attempts reached"
+      });
     }
 
-    let questionList = [...test.questions];
-    
-    if (test.shuffleQuestions) {
-      for (let i = questionList.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [questionList[i], questionList[j]] = [questionList[j], questionList[i]];
+    let totalQuestions = 0;
+    let totalMarks = 0;  // Initialize total marks
+    let questions = [];
+    let sections = [];
+    let sectionRemainingTime = [];
+
+    // =========================
+    // ✅ FLAT TEST
+    // =========================
+    if (!test.hasSections) {
+      // Calculate total marks from questions
+      for (const q of test.questions) {
+        const questionMarks = q.marks || 1; // Default to 1 if marks not set
+        totalMarks += questionMarks;
       }
+      
+      questions = test.questions.map((q) => ({
+        questionId: q._id
+      }));
+
+      totalQuestions = questions.length;
     }
 
-    const attemptQuestions = questionList.map((question) => ({
-      questionId: question._id,
-      selectedOption: null,
-      correctOption: question.correctAnswer, // 🔥 Store correct answer for later result calculation
-      isCorrect: null,
-      isMarkedForReview: false,
-      timeSpent: 0
-    }));
+    // =========================
+    // ✅ SECTION TEST
+    // =========================
+    else {
+      sections = test.sections.map((sec, index) => {
+        const secDuration = sec.duration;
+        
+        if (!secDuration || secDuration <= 0) {
+          throw new Error(`Invalid duration in section ${sec.title}`);
+        }
+        
+        // Calculate section total marks
+        let sectionTotalMarks = 0;
+        for (const q of sec.questions) {
+          const questionMarks = q.marks || 1; // Default to 1 if marks not set
+          sectionTotalMarks += questionMarks;
+        }
+        
+        sectionRemainingTime.push({
+          sectionIndex: index,
+          remainingTime: secDuration * 60,
+          lastUpdatedAt: now
+        });
+        
+        totalQuestions += sec.questions.length;
+        totalMarks += sectionTotalMarks;
+        
+        return {
+          sectionIndex: index,
+          sectionTitle: sec.title,
+          sectionDuration: secDuration,
+          totalMarks: sectionTotalMarks,  // Store section total marks
+          sectionLocked: false,
+          questions: sec.questions.map((q) => ({
+            questionId: q._id
+          }))
+        };
+      });
+    }
 
-    
-
-    const durationInSeconds = test.duration * 60;
-
-    const attempt = await Attempt.create({
+    const attemptData = {
       user: userId,
       test: testId,
-      questions: attemptQuestions,
-      totalQuestions: test.questions.length,
-      totalMarks: test.totalMarks,
+      hasSections: test.hasSections,
+      questions: test.hasSections ? [] : questions,
+      sections: test.hasSections ? sections : [],
+      sectionRemainingTime: test.hasSections ? sectionRemainingTime : [],
+      totalQuestions,
+      totalMarks,  // Use calculated total marks
       negativeMarks: test.negativeMarks || 0,
-      duration: test.duration,
+      status: "in-progress",
       startedAt: now,
-      remainingTime: durationInSeconds,
       lastResumedAt: now,
-      status: "in-progress"
-    });
+      currentQuestionIndex: 0,
+      currentSectionIndex: 0
+    };
 
-    res.status(201).json({
-      msg: "Test started successfully",
+    if (!test.hasSections) {
+      attemptData.duration = test.duration;
+      attemptData.remainingTime = test.duration * 60;
+    }
+
+    const attempt = await Attempt.create(attemptData);
+
+    return res.status(201).json({
+      msg: "Test started",
       attemptId: attempt._id,
-      resume: false,
-      remainingTime: durationInSeconds
+      hasSections: attempt.hasSections,
+      totalMarks: attempt.totalMarks,  // Include in response for verification
+      remainingTime: attempt.hasSections
+        ? attempt.sectionRemainingTime
+        : attempt.remainingTime
     });
 
   } catch (err) {
+    console.error("Error in startTest:", err);
     res.status(500).json({ msg: err.message });
   }
 };
@@ -201,6 +446,7 @@ const startTest = async (req, res) => {
 const pauseTest = async (req, res) => {
   try {
     const { attemptId } = req.params;
+
     const attempt = await Attempt.findOne({
       _id: attemptId,
       user: req.user.id
@@ -211,30 +457,30 @@ const pauseTest = async (req, res) => {
     }
 
     if (attempt.status !== "in-progress") {
-      return res.status(400).json({
-        msg: "Test is not running"
-      });
+      return res.status(400).json({ msg: "Test not running" });
     }
 
-    // ✅ ONLY ONE SYNC
     syncRemainingTime(attempt);
 
-    if (attempt.remainingTime <= 0) {
+    if (
+      (!attempt.hasSections && attempt.remainingTime === 0) ||
+      (attempt.hasSections && attempt.status === "completed")
+    ) {
       attempt.status = "completed";
+      attempt.submittedAt = new Date();
+      // 🔥 Calculate results when time expires during pause
+      calculateAttemptResults(attempt);
       await attempt.save();
 
-      return res.status(400).json({ msg: "Time is over" });
+      return res.status(400).json({ msg: "Time over" });
     }
 
     attempt.status = "paused";
-    attempt.lastResumedAt = null; // 🔥 CRITICAL
+    attempt.lastResumedAt = null;
 
     await attempt.save();
 
-    res.json({
-      msg: "Test paused successfully",
-      remainingTime: attempt.remainingTime
-    });
+    res.json({ msg: "Paused" });
 
   } catch (err) {
     res.status(500).json({ msg: err.message });
@@ -255,30 +501,29 @@ const resumeTest = async (req, res) => {
     }
 
     if (attempt.status !== "paused") {
-      return res.status(400).json({
-        msg: "Test is not paused"
-      });
+      return res.status(400).json({ msg: "Not paused" });
     }
 
-    if (attempt.remainingTime <= 0) {
-      attempt.status = "completed";
-      await attempt.save();
-
-      return res.status(400).json({ msg: "Time is over" });
-    }
-
-    // ❌ NO SYNC HERE (very important)
+    // 🔥 DO NOT sync here (important)
 
     attempt.status = "in-progress";
     attempt.lastResumedAt = new Date();
 
+    if (attempt.hasSections) {
+      const currentTimer = attempt.sectionRemainingTime.find(
+        (s) => s.sectionIndex === attempt.currentSectionIndex
+      );
+
+      if (currentTimer) {
+        currentTimer.lastUpdatedAt = new Date();
+      }
+    }
+
     await attempt.save();
 
     res.json({
-      msg: "Resume test",
-      attemptId: attempt._id,
-      remainingTime: attempt.remainingTime,
-      currentQuestionIndex: attempt.currentQuestionIndex
+      msg: "Resumed",
+      attemptId: attempt._id
     });
 
   } catch (err) {
@@ -293,55 +538,232 @@ const getAttemptQuestions = async (req, res) => {
     const attempt = await Attempt.findOne({
       _id: attemptId,
       user: req.user.id
-    });
-
+    }).populate("user", "name email _id");
+    
+    
     if (!attempt) {
       return res.status(404).json({ msg: "Attempt not found" });
     }
 
-    // ✅ SYNC TIME
+    // =========================
+    // ⏱ SYNC TIMER
+    // =========================
     syncRemainingTime(attempt);
 
-    // ⛔ Time over
-    if (attempt.remainingTime <= 0) {
-      attempt.status = "completed";
+    // =========================
+    // 🏁 HANDLE COMPLETION
+    // =========================
+    if (attempt.status === "completed") {
       await attempt.save();
 
-      return res.status(400).json({ msg: "Time is over" });
+      return res.status(200).json({
+        success: true,
+        msg: "Test completed",
+        status: "completed",
+        user: attempt.user, // Include user info
+        attempt: {
+          id: attempt._id,
+          score: attempt.score,
+          totalMarks: attempt.totalMarks,
+          percentage: attempt.percentage,
+          submittedAt: attempt.submittedAt
+        }
+      });
     }
 
-    await attempt.save(); // save updated time
+    await attempt.save();
 
-    const questionIds = attempt.questions.map(q => q.questionId);
+    // =========================
+    // ✅ FLAT TEST
+    // =========================
+    if (!attempt.hasSections) {
+      if (attempt.remainingTime <= 0) {
+        attempt.status = "completed";
+        attempt.submittedAt = new Date();
+         // 🔥 Calculate results when time expires
+        calculateAttemptResults(attempt);
+        await attempt.save();
+
+        return res.status(400).json({ 
+          success: false,
+          msg: "Time is over",
+          user: attempt.user
+        });
+      }
+
+      const questionIds = attempt.questions.map(q => q.questionId);
+
+      const questions = await Question.find({
+        _id: { $in: questionIds }
+      }).select("-correctAnswer");
+
+      const questionMap = {};
+      questions.forEach(q => {
+        questionMap[q._id] = q;
+      });
+
+      const orderedQuestions = attempt.questions.map(q => ({
+        ...questionMap[q.questionId]?.toObject(),
+        selectedOption: q.selectedOption,
+        isMarkedForReview: q.isMarkedForReview,
+        timeSpent: q.timeSpent || 0
+      }));
+
+      return res.json({
+        success: true,
+        user: {
+          id: attempt.user._id,
+          name: attempt.user.name,
+          email: attempt.user.email
+        },
+        attempt: {
+          id: attempt._id,
+          status: attempt.status,
+          hasSections: false,
+          currentQuestionIndex: attempt.currentQuestionIndex,
+          remainingTime: attempt.remainingTime,
+          totalQuestions: attempt.totalQuestions,
+          startedAt: attempt.startedAt,
+          lastResumedAt: attempt.lastResumedAt
+        },
+        questions: orderedQuestions
+      });
+    }
+
+    // =========================
+    // ✅ SECTIONAL TEST
+    // =========================
+    else {
+      const currentSectionIndex = attempt.currentSectionIndex;
+
+      const currentSection = attempt.sections.find(
+        s => s.sectionIndex === currentSectionIndex
+      );
+
+      if (!currentSection) {
+        return res.status(400).json({ 
+          success: false,
+          msg: "Invalid section state",
+          user: attempt.user
+        });
+      }
+
+      const sectionTimer = attempt.sectionRemainingTime.find(
+        s => s.sectionIndex === currentSectionIndex
+      );
+
+// In the sectional test section of getAttemptQuestions:
+
+// ⛔ Section time over (extra safety)
+if (!sectionTimer || sectionTimer.remainingTime <= 0) {
+  // Lock the current section
+  if (currentSection && !currentSection.sectionLocked) {
+    currentSection.sectionLocked = true;
+    currentSection.completedAt = new Date();
     
-    const questions = await Question.find({
-      _id: { $in: questionIds }
-    }).select("-correctAnswer");
+    // Check if there's a next section
+    const nextSection = attempt.sections.find(
+      (s) => s.sectionIndex > currentSectionIndex && !s.sectionLocked
+    );
+    
+    if (!nextSection) {
+      // No more sections - complete the test
+      attempt.status = "completed";
+      attempt.submittedAt = new Date();
+      calculateAttemptResults(attempt);
+      await attempt.save();
+      
+      return res.status(400).json({
+        success: false,
+        msg: "Test completed - all sections time over",
+        user: attempt.user
+      });
+    } else {
+      // Move to next section
+      attempt.currentSectionIndex = nextSection.sectionIndex;
+      attempt.currentQuestionIndex = 0;
+      
+      // Update next section timer
+      const nextTimer = attempt.sectionRemainingTime.find(
+        (s) => s.sectionIndex === nextSection.sectionIndex
+      );
+      if (nextTimer) {
+        nextTimer.lastUpdatedAt = new Date();
+      }
+      
+      await attempt.save();
+      
+      return res.status(400).json({
+        success: false,
+        msg: "Section time is over, moving to next section",
+        user: attempt.user
+      });
+    }
+  }
+}
 
-    const questionMap = {};
-    questions.forEach(q => {
-      questionMap[q._id] = q;
-    });
+      const questionIds = currentSection.questions.map(q => q.questionId);
 
-    const orderedQuestions = attempt.questions.map(q => ({
-      ...questionMap[q.questionId]?.toObject(),
-      selectedOption: q.selectedOption,
-      isMarkedForReview: q.isMarkedForReview
-    }));
+      const questions = await Question.find({
+        _id: { $in: questionIds }
+      }).select("-correctAnswer");
 
-    res.json({
-      attemptId: attempt._id,
-      userEmail: req.user.email,
-      userId: req.user.id,
-      status: attempt.status,
-      currentQuestionIndex: attempt.currentQuestionIndex,
-      remainingTime: attempt.remainingTime, // ✅ FIXED
-      totalQuestions: attempt.totalQuestions,
-      questions: orderedQuestions
-    });
+      const questionMap = {};
+      questions.forEach(q => {
+        questionMap[q._id] = q;
+      });
+
+      const orderedQuestions = currentSection.questions.map(q => ({
+        ...questionMap[q.questionId]?.toObject(),
+        selectedOption: q.selectedOption,
+        isMarkedForReview: q.isMarkedForReview,
+        timeSpent: q.timeSpent || 0
+      }));
+
+      // ✅ SECTION SUMMARY (for sidebar UI)
+      const sectionSummary = attempt.sections.map(sec => {
+        const timer = attempt.sectionRemainingTime.find(
+          s => s.sectionIndex === sec.sectionIndex
+        );
+
+        return {
+          sectionIndex: sec.sectionIndex,
+          sectionTitle: sec.sectionTitle,
+          totalQuestions: sec.questions.length,
+          sectionLocked: sec.sectionLocked,
+          remainingTime: timer ? timer.remainingTime : 0
+        };
+      });
+
+      return res.json({
+        success: true,
+        user: {
+          id: attempt.user._id,
+          name: attempt.user.name,
+          email: attempt.user.email
+        },
+        attempt: {
+          id: attempt._id,
+          status: attempt.status,
+          hasSections: true,
+          currentSectionIndex,
+          currentQuestionIndex: attempt.currentQuestionIndex,
+          remainingTime: sectionTimer.remainingTime,
+          totalQuestions: currentSection.questions.length,
+          startedAt: attempt.startedAt,
+          completedSections: attempt.completedSections
+        },
+        sections: sectionSummary,
+        questions: orderedQuestions
+      });
+    }
 
   } catch (err) {
-    res.status(500).json({ msg: err.message });
+    console.error("Get attempt questions error:", err);
+    res.status(500).json({ 
+      success: false,
+      msg: err.message 
+    });
   }
 };
 
@@ -351,87 +773,196 @@ const saveAnswer = async (req, res) => {
 
     const {
       questionId,
-      selectedOption, // ✅ now option ID
+      selectedOption,
       timeSpent,
       isMarkedForReview,
-      currentQuestionIndex
+      currentQuestionIndex,
+      sectionIndex // 🔥 REQUIRED for sectional tests
     } = req.body;
-    
+
     const attempt = await Attempt.findOne({
       _id: attemptId,
       user: req.user.id
-    }).populate("questions.questionId", "options correctAnswer marks"); // 🔥 populate questions for validation
-    
+    })
+      .populate("questions.questionId", "options correctAnswer marks")
+      .populate("sections.questions.questionId", "options correctAnswer marks");
+
     if (!attempt) {
       return res.status(404).json({ msg: "Attempt not found" });
     }
 
-    // ✅ SYNC TIMER
+    // =========================
+    // ⏱ SYNC TIMER FIRST
+    // =========================
     syncRemainingTime(attempt);
 
-    if (attempt.remainingTime <= 0) {
-      attempt.status = "completed";
-      await attempt.save();
-
-      return res.status(400).json({ msg: "Time is over" });
-    }
-
+    // =========================
+    // 🏁 HANDLE AUTO COMPLETION
+    // =========================
     if (attempt.status === "completed") {
+      await attempt.save();
       return res.status(400).json({
         msg: "Test already submitted"
       });
     }
-    
-    //console.log(attempt.questions);
-    const question = attempt.questions.find(
-      (q) => q.questionId._id.toString() === questionId
-    );
 
-    if (!question) {
-      return res.status(400).json({ msg: "Invalid question" });
-    }
-   
-    //✅ Validate selectedOption (OPTION ID)
-    if (selectedOption !== undefined) {
-      const options = question.questionId.options;
-      const isValidOption = options.some(
-        (opt) => opt.id === selectedOption
+    // =========================
+    // ✅ FLAT TEST LOGIC
+    // =========================
+    if (!attempt.hasSections) {
+      if (attempt.remainingTime <= 0) {
+        attempt.status = "completed";
+        attempt.submittedAt = new Date();
+        await attempt.save();
+
+        return res.status(400).json({ msg: "Time is over" });
+      }
+
+      const question = attempt.questions.find(
+        (q) => q.questionId._id.toString() === questionId
       );
-      
-      if (!isValidOption) {
-        return res.status(400).json({
-          msg: "Invalid option selected"
+
+      if (!question) {
+        return res.status(400).json({ msg: "Invalid question" });
+      }
+
+      // ✅ Validate & save option
+      if (selectedOption !== undefined) {
+        const isValid = question.questionId.options.some(
+          (opt) => opt.id === selectedOption
+        );
+
+        if (!isValid) {
+          return res.status(400).json({ msg: "Invalid option" });
+        }
+
+        question.selectedOption = selectedOption;
+        const correctAnswer = question.questionId.correctAnswer;
+        const marks = question.questionId.marks || 0;
+        const negativeMarks = attempt.negativeMarks || 0;
+
+        // ✅ CHECK CORRECTNESS
+        question.isCorrect = correctAnswer === selectedOption;
+
+        // ✅ CALCULATE MARKS
+        if (question.isCorrect) {
+          question.marksObtained = marks;
+        } else {
+          question.marksObtained = -negativeMarks;
+        }
+      }
+
+      if (isMarkedForReview !== undefined) {
+        question.isMarkedForReview = isMarkedForReview;
+      }
+
+      if (timeSpent) {
+        question.timeSpent = (question.timeSpent || 0) + timeSpent;
+      }
+
+      if (currentQuestionIndex !== undefined) {
+        attempt.currentQuestionIndex = currentQuestionIndex;
+      }
+    }
+
+    // =========================
+    // ✅ SECTIONAL TEST LOGIC
+    // =========================
+    else {
+      // 🔒 NO SECTION SWITCHING
+      if (sectionIndex !== attempt.currentSectionIndex) {
+        return res.status(403).json({
+          msg: "Section switching not allowed"
         });
       }
-    
-      question.selectedOption = selectedOption;
-    
-      // 🔥 Optional: set correctness immediately
-      question.isCorrect =
-        question.questionId.correctAnswer === selectedOption;
+
+      const currentSection = attempt.sections.find(
+        (s) => s.sectionIndex === sectionIndex
+      );
+
+      if (!currentSection) {
+        return res.status(400).json({ msg: "Invalid section" });
+      }
+
+      // 🔒 SECTION LOCK CHECK
+      if (currentSection.sectionLocked) {
+        return res.status(400).json({
+          msg: "Section is locked"
+        });
+      }
+
+      const sectionTimer = attempt.sectionRemainingTime.find(
+        (s) => s.sectionIndex === sectionIndex
+      );
+
+      if (!sectionTimer || sectionTimer.remainingTime <= 0) {
+        return res.status(400).json({
+          msg: "Section time is over"
+        });
+      }
+
+      const question = currentSection.questions.find(
+        (q) => q.questionId._id.toString() === questionId
+      );
+
+      if (!question) {
+        return res.status(400).json({ msg: "Invalid question" });
+      }
+
+      // ✅ Validate & save option
+      if (selectedOption !== undefined) {
+        const isValid = question.questionId.options.some(
+          (opt) => opt.id === selectedOption
+        );
+
+        if (!isValid) {
+          return res.status(400).json({ msg: "Invalid option" });
+        }
+
+        question.selectedOption = selectedOption;
+        const correctAnswer = question.questionId.correctAnswer;
+        const marks = question.questionId.marks || 0;
+        const negativeMarks = attempt.negativeMarks || 0;
+
+        // ✅ CHECK CORRECTNESS
+        question.isCorrect = correctAnswer === selectedOption;
+
+        // ✅ CALCULATE MARKS
+        if (question.isCorrect) {
+          question.marksObtained = marks;
+        } else {
+          question.marksObtained = -negativeMarks;
+        }
+
+      }
+
+      if (isMarkedForReview !== undefined) {
+        question.isMarkedForReview = isMarkedForReview;
+      }
+
+      if (timeSpent) {
+        question.timeSpent = (question.timeSpent || 0) + timeSpent;
+      }
+
+      if (currentQuestionIndex !== undefined) {
+        attempt.currentQuestionIndex = currentQuestionIndex;
+      }
     }
 
-    // if (selectedOption !== undefined) {
-    //   question.selectedOption = selectedOption;
-    // }
-
-    if (isMarkedForReview !== undefined) {
-      question.isMarkedForReview = isMarkedForReview;
-    }
-
-    if (timeSpent) {
-      question.timeSpent += timeSpent;
-    }
-
-    if (currentQuestionIndex !== undefined) {
-      attempt.currentQuestionIndex = currentQuestionIndex;
-    }
-
+    // =========================
+    // 💾 SAVE ATTEMPT
+    // =========================
     await attempt.save();
 
-    res.json({ msg: "Answer saved successfully" });
+    res.json({
+      msg: "Answer saved successfully",
+      currentSectionIndex: attempt.currentSectionIndex,
+      currentQuestionIndex: attempt.currentQuestionIndex,
+      status: attempt.status
+    });
 
   } catch (err) {
+    console.error("Save answer error:", err);
     res.status(500).json({ msg: err.message });
   }
 };
@@ -455,66 +986,109 @@ const submitTest = async (req, res) => {
       });
     }
 
-    // ✅ FINAL SYNC
+    // =========================
+    // ⏱ FINAL SYNC
+    // =========================
     syncRemainingTime(attempt);
 
-    if (attempt.remainingTime <= 0) {
-      attempt.status = "completed";
-    }
-
-    const questionIds = attempt.questions.map(q => q.questionId);
-
-    const questions = await Question.find({
-      _id: { $in: questionIds }
-    }).select("+correctAnswer");
-
-    const questionMap = {};
-    questions.forEach(q => {
-      questionMap[q._id.toString()] = q;
-    });
-
-    let score = 0;
+    // =========================
+    // 🧠 INIT RESULT
+    // =========================
+    let totalScore = 0;
     let correctCount = 0;
     let wrongCount = 0;
     let unattempted = 0;
 
-    attempt.questions.forEach(q => {
-      const actualQuestion = questionMap[q.questionId];
+    let sectionResults = [];
 
-      if (!q.selectedOption) {
-        unattempted++;
-        return;
-      }
+    // =========================
+    // ✅ FLAT TEST
+    // =========================
+    if (!attempt.hasSections) {
+      attempt.questions.forEach(q => {
+        if (!q.selectedOption) {
+          unattempted++;
+        } else if (q.isCorrect) {
+          correctCount++;
+        } else {
+          wrongCount++;
+        }
 
-      if (q.selectedOption === actualQuestion.correctAnswer) {
-        q.isCorrect = true;
-        score += actualQuestion.marks || 0;
-        correctCount++;
-      } else {
-        q.isCorrect = false;
-        score -= attempt.negativeMarks || 0;
-        wrongCount++;
-      }
-    });
+        totalScore += q.marksObtained || 0;
+      });
+    }
 
-    attempt.score = score;
+    // =========================
+    // ✅ SECTIONAL TEST
+    // =========================
+    else {
+      attempt.sections.forEach(section => {
+        let sectionScore = 0;
+        let sectionCorrect = 0;
+        let sectionWrong = 0;
+        let sectionUnattempted = 0;
+
+        section.questions.forEach(q => {
+          if (!q.selectedOption) {
+            sectionUnattempted++;
+          } else if (q.isCorrect) {
+            sectionCorrect++;
+          } else {
+            sectionWrong++;
+          }
+
+          sectionScore += q.marksObtained || 0;
+        });
+
+        // accumulate global
+        totalScore += sectionScore;
+        correctCount += sectionCorrect;
+        wrongCount += sectionWrong;
+        unattempted += sectionUnattempted;
+
+        // store section result
+        sectionResults.push({
+          sectionIndex: section.sectionIndex,
+          sectionTitle: section.sectionTitle,
+          score: sectionScore,
+          correct: sectionCorrect,
+          wrong: sectionWrong,
+          unattempted: sectionUnattempted,
+          totalQuestions: section.questions.length
+        });
+      });
+    }
+
+    // =========================
+    // 🏁 FINALIZE ATTEMPT
+    // =========================
+    attempt.score = totalScore;
+    attempt.correctAnswers = correctCount;
+    attempt.wrongAnswers = wrongCount;
+    attempt.unattempted = unattempted;
+
     attempt.status = "completed";
     attempt.submittedAt = new Date();
 
     await attempt.save();
 
-    res.json({
+    // =========================
+    // 📤 RESPONSE
+    // =========================
+    return res.json({
       msg: "Test submitted successfully",
       result: {
-        score,
+        score: totalScore,
         totalMarks: attempt.totalMarks,
         correct: correctCount,
         wrong: wrongCount,
-        unattempted
+        unattempted,
+        ...(attempt.hasSections && { sections: sectionResults })
       }
     });
 
   } catch (err) {
+    console.error("Submit test error:", err);
     res.status(500).json({ msg: err.message });
   }
 };
@@ -539,41 +1113,117 @@ const getDetailedResult = async (req, res) => {
       });
     }
 
-    // 🔥 Get full question data (including correctAnswer now)
-    const questionIds = attempt.questions.map(q => q.questionId);
+    // =========================
+    // ✅ FLAT TEST
+    // =========================
+    if (!attempt.hasSections) {
+      const questionIds = attempt.questions.map(q => q.questionId);
 
-    const questions = await Question.find({
-      _id: { $in: questionIds }
-    }).select("+correctAnswer");
+      const questions = await Question.find({
+        _id: { $in: questionIds }
+      }).select("+correctAnswer");
 
-    const questionMap = {};
-    questions.forEach(q => {
-      questionMap[q._id] = q;
-    });
-    
-    const detailed = attempt.questions.map(q => {
-      const actual = questionMap[q.questionId];
+      const questionMap = {};
+      questions.forEach(q => {
+        questionMap[q._id] = q;
+      });
 
-      return {
-        questionId: q.questionId,
-        questionText: actual.questionText,
-        options: actual.options,
-        
-        selectedOption: q.selectedOption,
-        correctAnswer: actual.correctAnswer,
+      const detailed = attempt.questions.map(q => {
+        const actual = questionMap[q.questionId];
 
-        isCorrect: q.isCorrect,
-        timeSpent: q.timeSpent
-      };
-    });
+        return {
+          questionId: q.questionId,
+          questionText: actual.questionText,
+          options: actual.options,
+          
+          selectedOption: q.selectedOption,
+          correctAnswer: actual.correctAnswer,
 
-    res.json({
-      score: attempt.score,
-      totalMarks: attempt.totalMarks,
-      questions: detailed
-    });
+          isCorrect: q.isCorrect,
+          marksObtained: q.marksObtained || 0,
+          timeSpent: q.timeSpent || 0,
+
+          status: !q.selectedOption
+            ? "unattempted"
+            : q.isCorrect
+            ? "correct"
+            : "wrong"
+        };
+      });
+
+      return res.json({
+        score: attempt.score,
+        totalMarks: attempt.totalMarks,
+        correct: attempt.correctAnswers,
+        wrong: attempt.wrongAnswers,
+        unattempted: attempt.unattempted,
+        hasSections: attempt.hasSections,
+        questions: detailed
+      });
+    }
+
+    // =========================
+    // ✅ SECTIONAL TEST
+    // =========================
+    else {
+      let sectionResults = [];
+
+      for (const section of attempt.sections) {
+        const questionIds = section.questions.map(q => q.questionId);
+
+        const questions = await Question.find({
+          _id: { $in: questionIds }
+        }).select("+correctAnswer");
+
+        const questionMap = {};
+        questions.forEach(q => {
+          questionMap[q._id] = q;
+        });
+
+        const detailedQuestions = section.questions.map(q => {
+          const actual = questionMap[q.questionId];
+
+          return {
+            questionId: q.questionId,
+            questionText: actual.questionText,
+            options: actual.options,
+
+            selectedOption: q.selectedOption,
+            correctAnswer: actual.correctAnswer,
+
+            isCorrect: q.isCorrect,
+            marksObtained: q.marksObtained || 0,
+            timeSpent: q.timeSpent || 0,
+
+            status: !q.selectedOption
+              ? "unattempted"
+              : q.isCorrect
+              ? "correct"
+              : "wrong"
+          };
+        });
+
+        sectionResults.push({
+          sectionIndex: section.sectionIndex,
+          sectionTitle: section.sectionTitle,
+          totalQuestions: section.questions.length,
+          questions: detailedQuestions
+        });
+      }
+
+      return res.json({
+        score: attempt.score,
+        totalMarks: attempt.totalMarks,
+        correct: attempt.correctAnswers,
+        wrong: attempt.wrongAnswers,
+        unattempted: attempt.unattempted,
+        hasSections: attempt.hasSections,
+        sections: sectionResults
+      });
+    }
 
   } catch (err) {
+    console.error("Detailed result error:", err);
     res.status(500).json({ msg: err.message });
   }
 };
@@ -590,12 +1240,11 @@ const getLeaderboard = async (req, res) => {
         }
       },
 
-      // 🔥 Sort so oldest attempt comes first
+      // ✅ BEST attempt per user
       {
-        $sort: { submittedAt: 1 }
+        $sort: { score: -1, submittedAt: 1 }
       },
 
-      // 🔥 Group by user → pick FIRST attempt
       {
         $group: {
           _id: "$user",
@@ -603,12 +1252,11 @@ const getLeaderboard = async (req, res) => {
         }
       },
 
-      // 🔥 Replace root with attempt object
       {
         $replaceRoot: { newRoot: "$attempt" }
       },
 
-      // 🔥 Now apply leaderboard ranking logic
+      // ✅ Final ranking sort
       {
         $sort: { score: -1, submittedAt: 1 }
       },
@@ -617,7 +1265,7 @@ const getLeaderboard = async (req, res) => {
         $limit: 50
       },
 
-      // 🔥 Join user data
+      // ✅ Join user
       {
         $lookup: {
           from: "users",
@@ -626,33 +1274,45 @@ const getLeaderboard = async (req, res) => {
           as: "user"
         }
       },
-      {
-        $unwind: "$user"
-      },
+      { $unwind: "$user" },
 
-      // 🔥 Final shape
+      // ✅ Projection
       {
         $project: {
           score: 1,
+          correctAnswers: 1,
+          wrongAnswers: 1,
           submittedAt: 1,
+          totalQuestions: 1,
           "user.name": 1,
           "user.email": 1
         }
       }
     ]);
 
-    // ✅ Add rank
-    const result = leaderboard.map((a, index) => ({
-      rank: index + 1,
-      name: a.user.name,
-      email: a.user.email,
-      score: a.score,
-      submittedAt: a.submittedAt
-    }));
+    // ✅ Add rank + accuracy
+    const result = leaderboard.map((a, index) => {
+      const attempted = a.correctAnswers + a.wrongAnswers;
+      const accuracy = attempted
+        ? (a.correctAnswers / attempted) * 100
+        : 0;
+
+      return {
+        rank: index + 1,
+        name: a.user.name,
+        email: a.user.email,
+        score: a.score,
+        correct: a.correctAnswers,
+        wrong: a.wrongAnswers,
+        accuracy: Number(accuracy.toFixed(2)),
+        submittedAt: a.submittedAt
+      };
+    });
 
     res.json({ leaderboard: result });
 
   } catch (err) {
+    console.error("Leaderboard error:", err);
     res.status(500).json({ msg: err.message });
   }
 };
@@ -739,7 +1399,6 @@ const getMyResults = async (req, res) => {
 
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 5;
-
     const skip = (page - 1) * limit;
 
     const results = await Attempt.aggregate([
@@ -749,39 +1408,50 @@ const getMyResults = async (req, res) => {
           status: "completed"
         }
       },
-    
-      { $sort: { submittedAt: -1 } },
-    
-      // 🔥 JOIN with Test collection
+
+      // ✅ Sort properly for grouping
+      { $sort: { test: 1, submittedAt: -1 } },
+
+      // ✅ Join Test
       {
         $lookup: {
-          from: "tests", // collection name (IMPORTANT: lowercase plural)
+          from: "tests",
           localField: "test",
           foreignField: "_id",
           as: "testData"
         }
       },
-    
       { $unwind: "$testData" },
-    
+
+      // ✅ Group by test
       {
         $group: {
           _id: "$test",
-          title: { $first: "$testData.title" }, // ✅ FIXED
+
+          title: { $first: "$testData.title" },
+
+          latestAttempt: { $first: "$submittedAt" },
+
+          bestScore: { $max: "$score" },
+
+          totalAttempts: { $sum: 1 },
+
           attempts: {
             $push: {
               attemptId: "$_id",
               score: "$score",
               totalMarks: "$totalMarks",
+              correct: "$correctAnswers",
+              wrong: "$wrongAnswers",
               submittedAt: "$submittedAt"
             }
-          },
-          latestAttempt: { $first: "$submittedAt" }
+          }
         }
       },
-    
+
       { $sort: { latestAttempt: -1 } },
-    
+
+      // ✅ Pagination
       {
         $facet: {
           metadata: [{ $count: "total" }],
@@ -793,11 +1463,27 @@ const getMyResults = async (req, res) => {
     const total = results[0].metadata[0]?.total || 0;
 
     // ✅ Final formatting
-    const formatted = results[0].data.map(item => ({
-      testId: item._id,
-      title: item.title,
-      attempts: item.attempts
-    }));
+    const formatted = results[0].data.map(item => {
+      const attempts = item.attempts.map(a => {
+        const attempted = a.correct + a.wrong;
+        const accuracy = attempted
+          ? (a.correct / attempted) * 100
+          : 0;
+
+        return {
+          ...a,
+          accuracy: Number(accuracy.toFixed(2))
+        };
+      });
+
+      return {
+        testId: item._id,
+        title: item.title,
+        bestScore: item.bestScore,
+        totalAttempts: item.totalAttempts,
+        attempts
+      };
+    });
 
     res.json({
       success: true,
@@ -809,6 +1495,7 @@ const getMyResults = async (req, res) => {
     });
 
   } catch (error) {
+    console.error("Get results error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch results",
@@ -851,7 +1538,7 @@ const getUserDashboard = async (req, res) => {
 
     // 4. Test statistics
     const totalTestsAttempted = allAttempts.length;
-    
+
     const testStats = {
       totalTests: totalTestsAttempted,
       totalScore: 0,
@@ -872,13 +1559,13 @@ const getUserDashboard = async (req, res) => {
 
     allAttempts.forEach(attempt => {
       const percentage = (attempt.score / attempt.totalMarks) * 100;
-      
+
       totalScoreSum += attempt.score;
       totalMarksSum += attempt.totalMarks;
-      
+
       if (percentage > bestScore) bestScore = percentage;
       if (percentage < worstScore) worstScore = percentage;
-      
+
       // Count passes/fails (assuming 40% as passing mark)
       if (percentage >= 40) {
         testStats.passCount++;
@@ -900,16 +1587,16 @@ const getUserDashboard = async (req, res) => {
         testStats.subjectWiseStats[subjectName].attempts++;
         testStats.subjectWiseStats[subjectName].totalScore += attempt.score;
         testStats.subjectWiseStats[subjectName].totalMarks += attempt.totalMarks;
-        testStats.subjectWiseStats[subjectName].averagePercentage = 
-          (testStats.subjectWiseStats[subjectName].totalScore / 
-           testStats.subjectWiseStats[subjectName].totalMarks) * 100;
+        testStats.subjectWiseStats[subjectName].averagePercentage =
+          (testStats.subjectWiseStats[subjectName].totalScore /
+            testStats.subjectWiseStats[subjectName].totalMarks) * 100;
       }
     });
 
     testStats.totalScore = totalScoreSum;
     testStats.totalMarks = totalMarksSum;
-    testStats.averageScore = totalTestsAttempted > 0 
-      ? (totalScoreSum / totalMarksSum) * 100 
+    testStats.averageScore = totalTestsAttempted > 0
+      ? (totalScoreSum / totalMarksSum) * 100
       : 0;
     testStats.bestScore = totalTestsAttempted > 0 ? bestScore : 0;
     testStats.worstScore = totalTestsAttempted > 0 ? worstScore : 0;
@@ -978,8 +1665,8 @@ const getUserDashboard = async (req, res) => {
         totalPossibleMarks: testStats.totalMarks,
         passCount: testStats.passCount,
         failCount: testStats.failCount,
-        successRate: totalTestsAttempted > 0 
-          ? Math.round((testStats.passCount / totalTestsAttempted) * 100) 
+        successRate: totalTestsAttempted > 0
+          ? Math.round((testStats.passCount / totalTestsAttempted) * 100)
           : 0,
         subjectWiseStats: testStats.subjectWiseStats,
         userRank: userRank
@@ -1086,49 +1773,88 @@ const updateUserProfile = async (req, res) => {
 const getUserTestHistory = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { page = 1, limit = 10 } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    const attempts = await Attempt.find({ user: userId, status: "completed" })
-      .populate({
-        path: "test",
-        select: "title description duration totalMarks subject topic",
-        populate: {
-          path: "subject topic",
-          select: "name"
-        }
-      })
+    const attempts = await Attempt.find({
+      user: userId,
+      status: "completed"
+    })
+    .populate({
+      path: "test",
+      select: "title description duration totalMarks subject topic subjects testType",
+      populate: [
+        { path: "subject", select: "name" },
+        { path: "topic", select: "name" },
+        { path: "subjects", select: "name" } // 🔥 ADD THIS
+      ]
+    })
       .sort({ submittedAt: -1 })
       .skip(skip)
-      .limit(parseInt(limit));
+      .limit(limit)
+      .lean();
 
-    const totalCount = await Attempt.countDocuments({ 
-      user: userId, 
-      status: "completed" 
+    const totalCount = await Attempt.countDocuments({
+      user: userId,
+      status: "completed"
     });
 
-    const formattedAttempts = attempts.map(attempt => ({
-      attemptId: attempt._id,
-      testId: attempt.test?._id,
-      testName: attempt.test?.title || "Unknown Test",
-      subject: attempt.test?.subject?.name || "N/A",
-      topic: attempt.test?.topic?.name || "N/A",
-      score: attempt.score,
-      totalMarks: attempt.totalMarks,
-      percentage: Math.round((attempt.score / attempt.totalMarks) * 100),
-      duration: attempt.duration,
-      submittedAt: attempt.submittedAt,
-      questionsAttempted: attempt.questions?.length || 0
-    }));
+    const formattedAttempts = attempts.map(attempt => {
+      const test = attempt.test || {};
+    
+      const totalMarks = attempt.totalMarks || 0;
+    
+      const percentage =
+        totalMarks === 0
+          ? 0
+          : Math.round((attempt.score / totalMarks) * 100);
+    
+      const questionsAttempted =
+        (attempt.correctAnswers || 0) +
+        (attempt.wrongAnswers || 0);
+    
+      // 🎯 HANDLE SUBJECT(S) PROPERLY
+      let subjectData = null;
+    
+      if (test.testType === "full") {
+        subjectData = test.subjects?.map(s => s.name) || [];
+      } else {
+        subjectData = test.subject?.name || "N/A";
+      }
+    
+      return {
+        attemptId: attempt._id,
+        testId: test._id || null,
+    
+        testName: test.title || "Deleted Test",
+        testType: test.testType,
+    
+        subject: subjectData,   // 🔥 NOW FLEXIBLE
+        topic: test.topic?.name || null,
+    
+        score: attempt.score,
+        totalMarks,
+        percentage,
+    
+        correct: attempt.correctAnswers || 0,
+        wrong: attempt.wrongAnswers || 0,
+        skipped: attempt.unattempted || 0,
+        questionsAttempted,
+    
+        duration: attempt.duration,
+        submittedAt: attempt.submittedAt
+      };
+    });
 
     res.status(200).json({
       success: true,
       data: formattedAttempts,
       pagination: {
-        currentPage: parseInt(page),
+        currentPage: page,
         totalPages: Math.ceil(totalCount / limit),
         totalCount,
-        limit: parseInt(limit)
+        limit
       }
     });
   } catch (error) {
@@ -1285,16 +2011,88 @@ const getRemainingTime = async (req, res) => {
   }
 };
 
-module.exports = { 
-  getAvailableTests, 
-  startTest, 
-  pauseTest, 
-  resumeTest, 
-  getAttemptQuestions, 
-  saveAnswer, 
-  submitTest, 
-  getDetailedResult, 
-  getLeaderboard, 
+
+// get tests based on filter
+const buildFilter = ({ type, subjectId, topicId }) => {
+  const now = new Date();
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const filter = {
+    isTemplate: false,
+    isPublished: true // ✅ ONLY PUBLISHED TESTS
+  };
+
+  // 🔥 NON-SCHEDULED TESTS
+  if (["topic", "subject", "full-length", "sectional"].includes(type)) {
+    filter.scheduleType = "one-time";
+    filter.startTime = { $lte: now };
+    filter.endTime = { $gte: now };
+
+    if (type === "topic") {
+      filter.testType = "topic";
+      if (subjectId) filter.subject = subjectId;
+      if (topicId) filter.topic = topicId;
+    }
+
+    if (type === "subject") {
+      filter.testType = "subject";
+      if (subjectId) filter.subject = subjectId;
+    }
+
+    if (type === "full-length") {
+      filter.testType = "full";
+    }
+
+    if (type === "sectional") {
+      filter.hasSections = true;
+    }
+  }
+
+  // 🔥 SCHEDULED TESTS
+  if (type === "scheduled") {
+    filter.scheduleType = { $in: ["daily", "weekly", "monthly"] };
+    filter.validForDate = today;
+  }
+
+  return filter;
+};
+
+const getAvailableTests = async (req, res) => {
+  try {
+    const filter = buildFilter(req.query);
+
+    const tests = await Test.find(filter)
+      .select("title testType subject topic subjects startTime endTime")
+      .populate("subject", "name")
+      .populate("topic", "name")
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      count: tests.length,
+      data: tests
+    });
+
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+module.exports = {
+  getAvailableTests,
+  startTest,
+  pauseTest,
+  resumeTest,
+  getAttemptQuestions,
+  saveAnswer,
+  submitTest,
+  getDetailedResult,
+  getLeaderboard,
   getPublishedTests,
   getTestById,
   getMyResults,

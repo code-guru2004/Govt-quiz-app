@@ -6,84 +6,144 @@ const getAttemptResult = async (req, res) => {
     const { attemptId } = req.params;
     const userId = req.user.id;
 
-    // 1. Fetch attempt
     const attempt = await Attempt.findById(attemptId)
-      .populate("test", "title totalMarks totalQuestions duration").populate("test.questions","facts");
+      .populate("test", "title totalMarks totalQuestions duration");
 
     if (!attempt) {
       return res.status(404).json({ message: "Attempt not found" });
     }
 
-    // 2. Security check
     if (attempt.user.toString() !== userId) {
       return res.status(403).json({ message: "Unauthorized access" });
     }
 
-    // ✅ FIXED HERE
-    const questionIds = attempt.questions.map(q => q.questionId);
+    // =========================
+    // 🧠 COMMON SUMMARY
+    // =========================
+    const summary = {
+      score: attempt.score,
+      totalMarks: attempt.totalMarks,
+      totalQuestions: attempt.totalQuestions,
+      correct: attempt.correctAnswers,
+      wrong: attempt.wrongAnswers,
+      skipped: attempt.unattempted,
+      accuracy:
+        attempt.correctAnswers + attempt.wrongAnswers === 0
+          ? 0
+          : Number(
+              (
+                (attempt.correctAnswers /
+                  (attempt.correctAnswers + attempt.wrongAnswers)) *
+                100
+              ).toFixed(2)
+            ),
+      attemptedAt: attempt.createdAt
+    };
 
-    // 4. Fetch questions
-    const questions = await Question.find({
-      _id: { $in: questionIds }
-    }).select("+correctAnswer");;
+    // =========================
+    // ✅ FLAT TEST
+    // =========================
+    if (!attempt.hasSections) {
+      const questionIds = attempt.questions.map(q => q.questionId);
 
-    // 5. Map questions
-    const questionMap = {};
-    questions.forEach(q => {
-      questionMap[q._id.toString()] = q;
-    });
+      const questions = await Question.find({
+        _id: { $in: questionIds }
+      }).select("+correctAnswer");
 
-    // 6. Build result
-    let correctCount = 0;
-    let wrongCount = 0;
-    let skippedCount = 0;
+      const questionMap = {};
+      questions.forEach(q => {
+        questionMap[q._id.toString()] = q;
+      });
 
-    const detailedAnswers = attempt.questions.map(ans => {
-      const q = questionMap[ans.questionId.toString()];
-    
-      if (!ans.selectedOption) {
-        skippedCount++;
-      } else if (ans.isCorrect) {
-        correctCount++;
-      } else {
-        wrongCount++;
+      const answers = attempt.questions.map(ans => {
+        const q = questionMap[ans.questionId.toString()];
+
+        return {
+          questionId: q?._id,
+          questionText: q?.questionText,
+          options: q?.options,
+          correctOption: q?.correctAnswer,
+
+          selectedOption: ans.selectedOption,
+          isCorrect: ans.isCorrect,
+          marksObtained: ans.marksObtained || 0,
+          timeSpent: ans.timeSpent || 0,
+
+          status: !ans.selectedOption
+            ? "unattempted"
+            : ans.isCorrect
+            ? "correct"
+            : "wrong",
+
+          fact: q?.fact || null
+        };
+      });
+
+      return res.json({
+        attemptId: attempt._id,
+        test: attempt.test,
+        summary,
+        answers
+      });
+    }
+
+    // =========================
+    // ✅ SECTIONAL TEST
+    // =========================
+    else {
+      let sections = [];
+
+      for (const section of attempt.sections) {
+        const questionIds = section.questions.map(q => q.questionId);
+
+        const questions = await Question.find({
+          _id: { $in: questionIds }
+        }).select("+correctAnswer");
+
+        const questionMap = {};
+        questions.forEach(q => {
+          questionMap[q._id.toString()] = q;
+        });
+
+        const answers = section.questions.map(ans => {
+          const q = questionMap[ans.questionId.toString()];
+
+          return {
+            questionId: q?._id,
+            questionText: q?.questionText,
+            options: q?.options,
+            correctOption: q?.correctAnswer,
+
+            selectedOption: ans.selectedOption,
+            isCorrect: ans.isCorrect,
+            marksObtained: ans.marksObtained || 0,
+            timeSpent: ans.timeSpent || 0,
+
+            status: !ans.selectedOption
+              ? "unattempted"
+              : ans.isCorrect
+              ? "correct"
+              : "wrong",
+
+            fact: q?.fact || null
+          };
+        });
+
+        sections.push({
+          sectionIndex: section.sectionIndex,
+          sectionTitle: section.sectionTitle,
+          totalQuestions: section.questions.length,
+          answers
+        });
       }
-    
-      return {
-        questionId: q?._id,
-        questionText: q?.questionText,
-        options: q?.options,
-        correctOption: q?.correctAnswer,
-        selectedOption: ans.selectedOption,
-        isCorrect: ans.isCorrect,
-        fact: q?.fact || null   // 🔥 FIXED
-      };
-    });
 
-    // 7. Accuracy
-    const totalAnswered = correctCount + wrongCount;
-    const accuracy =
-      totalAnswered === 0
-        ? 0
-        : ((correctCount / totalAnswered) * 100).toFixed(2);
-
-    // 8. Response
-    return res.json({
-      attemptId: attempt._id,
-      test: attempt.test,
-
-      summary: {
-        score: attempt.score,
-        totalQuestions: attempt.totalQuestions,
-        correct: correctCount,
-        wrong: wrongCount,
-        skipped: skippedCount,
-        accuracy: Number(accuracy),
-        attemptedAt: attempt.createdAt
-      },
-
-      answers: detailedAnswers
-    });
+      return res.json({
+        attemptId: attempt._id,
+        test: attempt.test,
+        summary,
+        sections
+      });
+    }
 
   } catch (error) {
     console.error("Get Attempt Result Error:", error);

@@ -56,7 +56,7 @@ const createTopic = async (req, res) => {
   
       const topics = await topicModel.find(query)
         .populate("subject", "name")
-        .sort({ name: 1 });
+        .sort({ createdAt: 1 });
   
       res.status(200).json({
         success: true,
@@ -74,9 +74,13 @@ const createTopic = async (req, res) => {
   // get all topics for a subject
   const getTopicsBySubject = async (req, res) => {
     try {
+      console.log("calling....")
       const { subjectId } = req.params;
 
-      const topics = await topicModel.find({ subject: subjectId }).sort({createdAt: -1});
+      const topics = await topicModel
+                                    .find({ subject: subjectId })
+                                    .sort({ createdAt: 1 });
+
 
       res.status(200).json({
         success: true,

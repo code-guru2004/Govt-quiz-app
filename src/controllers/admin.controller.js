@@ -6,7 +6,7 @@ const topicModel = require("../models/topic.model");
 const User = require("../models/User");
 const { randomUUID } = require("crypto");
 
-// create question -- {DONE}
+// create question -- {DONE}--{NEED}🟢
 const createQuestion = async (req, res) => {
   try {
     const {
@@ -137,7 +137,7 @@ const createQuestion = async (req, res) => {
   }
 };
 
-// create test -- {DONE}
+// create test -- {DONE}--{NO NEED}🔴
 const createTest = async (req, res) => {
   try {
     const {
@@ -238,7 +238,7 @@ const createTest = async (req, res) => {
   }
 };
 
-// add questions to test -- {DONE}
+// add questions to test -- {DONE}--{NO NEED}🔴
 const addQuestionsToTest = async (req, res) => {
   try {
     const { testId } = req.params;
@@ -304,10 +304,17 @@ const addQuestionsToTest = async (req, res) => {
   }
 };
 
-// get questions of a test with search and pagination -- {DONE}
+// get filter questions of a test with search and pagination -- {DONE} --{NEED}🟢
 const getQuestions = async (req, res) => {
   try {
-    let { search = "", page = 1, limit = 10, testId } = req.query;
+    let {
+      search = "",
+      page = 1,
+      limit = 10,
+      testId,
+      subjectId,   // 🔥 from frontend (for sectional)
+      topicId      // 🔥 from frontend
+    } = req.query;
 
     if (!testId) {
       return res.status(400).json({
@@ -320,7 +327,7 @@ const getQuestions = async (req, res) => {
     const limitNum = Math.min(50, Math.max(1, parseInt(limit) || 10));
 
     // 🔥 1. Get test
-    const test = await Test.findById(testId);
+    const test = await Test.findById(testId).lean();
 
     if (!test) {
       return res.status(404).json({
@@ -331,23 +338,62 @@ const getQuestions = async (req, res) => {
 
     let query = {};
 
-    // 🚫 2. Exclude already added questions
-    if (test.questions.length > 0) {
-      query._id = { $nin: test.questions };
+    // 🔥 2. Collect ALL existing question IDs (flat + sections)
+    let existingQuestionIds = [];
+
+    if (test.hasSections) {
+      existingQuestionIds = test.sections.flatMap(s => s.questions);
+    } else {
+      existingQuestionIds = test.questions;
     }
 
-    // 🎯 3. Apply test type filtering
-    if (test.testType === "topic") {
-      query.subject = test.subject;
-      query.topic = test.topic;
+    if (existingQuestionIds.length > 0) {
+      query._id = { $nin: existingQuestionIds };
     }
 
-    if (test.testType === "subject") {
-      query.subject = test.subject;
-    }
+    // 🔥 3. Base filtering by test type
 
-    if (test.testType === "full") {
-      query.subject = { $in: test.subjects };
+    if (!test.hasSections) {
+      // ✅ NON-SECTIONAL
+
+      if (test.testType === "topic") {
+        query.subject = test.subject;
+        query.topic = test.topic;
+      }
+
+      if (test.testType === "subject") {
+        query.subject = test.subject;
+      }
+
+      if (test.testType === "full-length") {
+        query.subject = { $in: test.subjects };
+      }
+
+    } else {
+      // ✅ SECTIONAL TEST (Frontend-driven filters)
+
+      if (subjectId) {
+        // 🔥 Validate subject belongs to test.subjects
+        const isValidSubject = test.subjects.some(
+          s => s.toString() === subjectId
+        );
+
+        if (!isValidSubject) {
+          return res.status(400).json({
+            success: false,
+            msg: "Selected subject does not belong to this test",
+          });
+        }
+
+        query.subject = subjectId;
+      } else {
+        // fallback → allow all test subjects
+        query.subject = { $in: test.subjects };
+      }
+
+      if (topicId) {
+        query.topic = topicId;
+      }
     }
 
     // 🔍 4. Search
@@ -360,17 +406,19 @@ const getQuestions = async (req, res) => {
 
     const skip = (pageNum - 1) * limitNum;
 
+    // 🔥 5. Fetch questions
     const questions = await Question.find(query)
-      .select("-correctAnswer")
+      .select("questionText options difficulty marks subject topic")
       .skip(skip)
       .limit(limitNum)
       .sort({ createdAt: -1 })
       .populate("subject", "name")
-      .populate("topic", "name");
+      .populate("topic", "name")
+      .lean();
 
     const total = await Question.countDocuments(query);
 
-    res.json({
+    return res.json({
       success: true,
       total,
       page: pageNum,
@@ -379,14 +427,14 @@ const getQuestions = async (req, res) => {
     });
 
   } catch (err) {
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       msg: err.message,
     });
   }
 };
 
-// make it public or private
+// make it public or private -- {DONE} --{NEED}🟢
 const makeTestStateChange = async (req, res) => {
   try {
     const { testId } = req.params;
@@ -414,6 +462,7 @@ const makeTestStateChange = async (req, res) => {
   }
 };
 
+// get all tests with basic details -- {DONE}--{No NEED}🔴
 const getAllTests = async (req, res) => {
   try {
     const tests = await Test.find().populate("questions", "questionText").sort({ createdAt: -1 });
@@ -431,32 +480,209 @@ const getAllTests = async (req, res) => {
   }
 };
 
-// get individual test details -- {DONE}
+// get individual test details -- {DONE} --{NEED}🟢
 const getIndividualTestDetails = async (req, res) => {
   try {
     const { testId } = req.params;
-    if (!testId) {
-      return res.status(400).json({ msg: "Test ID is required" });
+
+    // =========================
+    // ✅ VALIDATE OBJECT ID
+    // =========================
+    if (!mongoose.Types.ObjectId.isValid(testId)) {
+      return res.status(400).json({
+        success: false,
+        msg: "Invalid Test ID"
+      });
     }
 
-    const test = await Test.findById(testId).populate("questions").populate("subject", "name").populate("topic", "name").populate("subjects", "name");
+    // =========================
+    // 🚀 FETCH TEST WITH POPULATION
+    // =========================
+    const test = await Test.findById(testId)
+      .select(`
+        title description duration totalMarks
+        maxAttempts testType hasSections
+        questions sections
+        subject topic subjects
+        startTime endTime
+      `)
+
+      // 🔹 Test level populate
+      .populate("subject", "name")
+      .populate("topic", "name")
+      .populate("subjects", "name")
+
+      // 🔹 Flat questions
+      .populate({
+        path: "questions",
+        select: "questionText options subject topic marks difficulty",
+        populate: [
+          { path: "subject", select: "name" },
+          { path: "topic", select: "name" }
+        ]
+      })
+
+      // 🔹 Section questions
+      .populate({
+        path: "sections.questions",
+        select: "questionText options subject topic marks difficulty",
+        populate: [
+          { path: "subject", select: "name" },
+          { path: "topic", select: "name" }
+        ]
+      })
+
+      .lean();
+
     if (!test) {
-      return res.status(404).json({ msg: "Test not found" });
+      return res.status(404).json({
+        success: false,
+        msg: "Test not found"
+      });
     }
 
+    // =========================
+    // 🎯 SUBJECT HANDLING
+    // =========================
+    let subjectsData;
+
+    if (test.testType === "full") {
+      subjectsData = test.subjects?.map(s => s.name) || [];
+    } else {
+      subjectsData = test.subject?.name || null;
+    }
+
+    // =========================
+    // 📊 CALCULATIONS
+    // =========================
+    let totalMarksCalculated = 0;
+
+    const difficultyStats = {
+      easy: 0,
+      medium: 0,
+      hard: 0
+    };
+
+    const processQuestions = (questions = []) => {
+      questions.forEach(q => {
+        // total marks
+        totalMarksCalculated += q.marks || 0;
+
+        // difficulty
+        if (q.difficulty === "easy") difficultyStats.easy++;
+        else if (q.difficulty === "medium") difficultyStats.medium++;
+        else if (q.difficulty === "hard") difficultyStats.hard++;
+      });
+    };
+
+    // =========================
+    // 📦 BASE RESPONSE
+    // =========================
+    const formattedTest = {
+      _id: test._id,
+      title: test.title,
+      description: test.description,
+
+      duration: test.duration,
+
+      // 🔥 CALCULATED
+      totalMarks: totalMarksCalculated,
+      totalQuestions: 0,
+
+      maxAttempts: test.maxAttempts,
+
+      testType: test.testType,
+      hasSections: test.hasSections,
+
+      subject: subjectsData,
+      topic: test.topic?.name || null,
+
+      startTime: test.startTime,
+      endTime: test.endTime,
+
+      difficultyStats
+    };
+
+    // =========================
+    // ✅ FLAT TEST
+    // =========================
+    if (!test.hasSections) {
+      processQuestions(test.questions);
+
+      formattedTest.totalQuestions = test.questions.length;
+
+      formattedTest.questions = test.questions;
+    }
+
+    // =========================
+    // ✅ SECTIONAL TEST
+    // =========================
+    else {
+      let totalQuestions = 0;
+
+      formattedTest.sections = test.sections.map(section => {
+        let sectionMarks = 0;
+
+        const sectionStats = {
+          easy: 0,
+          medium: 0,
+          hard: 0
+        };
+
+        section.questions.forEach(q => {
+          totalQuestions++;
+
+          // overall stats
+          totalMarksCalculated += q.marks || 0;
+
+          if (q.difficulty === "easy") {
+            difficultyStats.easy++;
+            sectionStats.easy++;
+          } else if (q.difficulty === "medium") {
+            difficultyStats.medium++;
+            sectionStats.medium++;
+          } else if (q.difficulty === "hard") {
+            difficultyStats.hard++;
+            sectionStats.hard++;
+          }
+
+          // section marks
+          sectionMarks += q.marks || 0;
+        });
+
+        return {
+          title: section.title,
+          duration: section.duration,
+          totalMarks: sectionMarks,
+          totalQuestions: section.questions.length,
+          difficultyStats: sectionStats,
+          questions: section.questions
+        };
+      });
+
+      formattedTest.totalQuestions = totalQuestions;
+      formattedTest.totalMarks = totalMarksCalculated;
+    }
+
+    // =========================
+    // ✅ RESPONSE
+    // =========================
     res.json({
       success: true,
-      test,
+      test: formattedTest
     });
+
   } catch (err) {
     res.status(500).json({
       success: false,
-      msg: err.message,
+      msg: err.message
     });
   }
 };
 
-// remove question from test -- {DONE}
+
+
+// remove question from test -- {DONE} --{NO NEED}🔴
 const removeQuestionFromTest = async (req, res) => {
   try {
     const { testId, questionId } = req.params;
@@ -486,7 +712,7 @@ const removeQuestionFromTest = async (req, res) => {
 };
 
 
-// get dashboard stats -- {DONE}
+// get dashboard stats -- {DONE}🟢
 const getDashboardStats = async (req, res) => {
   try {
     const [
