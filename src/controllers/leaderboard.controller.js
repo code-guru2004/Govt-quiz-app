@@ -241,7 +241,7 @@ const getLeaderboard = async (req, res) => {
       );
   
       if (!userStats) {
-        return res.status(404).json({
+        return res.status(204).json({
           success: false,
           message: "User not found or no completed tests"
         });
@@ -249,7 +249,12 @@ const getLeaderboard = async (req, res) => {
   
       // Get user details
       const user = await User.findById(userId).select("name email mobile");
-  
+      if(!user){
+        return res.status(404).json({
+          success: false,
+          message: "User not found."
+        });
+      }
       res.status(200).json({
         success: true,
         data: {
