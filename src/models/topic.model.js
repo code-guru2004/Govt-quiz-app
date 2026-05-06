@@ -19,6 +19,39 @@ const topicSchema = new mongoose.Schema(
       imageUrl: {
         type: String,
         default: null
+      },
+      // ADD THIS FOR RICH TEXT CONTENT
+      content: {
+        type: String,  // Will store HTML from rich text editor
+        required: false,  // Set to true if content is mandatory
+        default: ""
+      },
+      // OPTIONAL BUT RECOMMENDED FIELDS
+      summary: {
+        type: String,  // Short preview/description
+        maxlength: 500,
+        default: ""
+      },
+      importantNotes: {
+        type: String,  // Could also be a separate rich text field for key points
+        default: ""
+      },
+      resources: [{
+        title: String,
+        url: String,
+        type: {
+          type: String,
+          enum: ['video', 'document', 'link', 'pdf'],
+          default: 'link'
+        }
+      }],
+      readTime: {
+        type: Number,  // Estimated reading time in minutes
+        default: null
+      },
+      order: {
+        type: Number,  // To order topics within a subject
+        default: 0
       }
     },
     { timestamps: true }

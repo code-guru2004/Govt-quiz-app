@@ -11,4 +11,8 @@ router.get("/search",authMiddleware.authMiddleware, subjectContoller.searchSubje
 router.get("/all",authMiddleware.authMiddleware, subjectContoller.getAllSubjects);
 // get all subjects with details (topics) - for everyone
 router.get("/all/with-details",authMiddleware.authMiddleware, subjectContoller.getAllSubjectsWithDetails);
+//get subejct details by id
+router.get("/:id",authMiddleware.authMiddleware, subjectContoller.getSubjectById);
+
+
 module.exports = router;
