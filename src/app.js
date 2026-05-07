@@ -13,6 +13,7 @@ const leaderboardRoutes = require("./routes/leaderboard.routes");
 const bookmarkRoutes = require("./routes/bookmark.routes");
 const questionRoutes = require("./routes/question.routes");
 
+const notesRouters = require("./routes/notes.route");
 
 const app = express();
 
@@ -40,7 +41,7 @@ app.use("/api/attempts",attemptRoutes);
 app.use("/api/leaderboard", leaderboardRoutes);
 app.use("/api/bookmarks", bookmarkRoutes);
 app.use("/api/questions", questionRoutes);
-
+app.use("/api/notes", notesRouters);
 
 app.get("/", (req, res) => {
   res.send("API running...");

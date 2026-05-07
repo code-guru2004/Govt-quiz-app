@@ -1,11 +1,20 @@
 const topicModel = require("../models/topic.model");
 const subjectModel = require("../models/subject.model");
+const noteModel = require("../models/note.model"); // Import note model for cascade operations
 
 const createTopic = async (req, res) => {
-    // Implementation for creating a topic
     try {
-        const { name, subjectId } = req.body;
-        // 🔥 Basic validation
+        const { 
+            name, 
+            subjectId, 
+            summary, 
+            imageUrl, 
+            order, 
+            readTime,
+            isActive 
+        } = req.body;
+        
+        // Basic validation
         if (!name || !subjectId) {
             return res.status(400).json({   
                 success: false,
@@ -13,7 +22,7 @@ const createTopic = async (req, res) => {
             });
         }
 
-        // check if subject exists
+        // Check if subject exists
         const subject = await subjectModel.findById(subjectId);
         if (!subject) {
             return res.status(404).json({
@@ -24,7 +33,12 @@ const createTopic = async (req, res) => {
         
         const topic = await topicModel.create({
             name,
-            subject: subject._id
+            subject: subject._id,
+            summary: summary || "",
+            imageUrl: imageUrl || null,
+            order: order || 0,
+            readTime: readTime || null,
+            isActive: isActive !== undefined ? isActive : true
         });
 
         res.status(201).json({
@@ -32,6 +46,13 @@ const createTopic = async (req, res) => {
             data: topic
         });
     } catch (err) {
+        // Handle duplicate key error
+        if (err.code === 11000) {
+            return res.status(400).json({
+                success: false,
+                message: "A topic with this name already exists under the same subject"
+            });
+        }
         res.status(500).json({
             success: false, 
             message: err.message
@@ -41,7 +62,7 @@ const createTopic = async (req, res) => {
 
 const searchTopics = async (req, res) => {
     try {
-        const { search, subject } = req.query;
+        const { search, subject, isActive } = req.query;
 
         let query = {};
 
@@ -53,14 +74,27 @@ const searchTopics = async (req, res) => {
             query.subject = subject;
         }
 
+        if (isActive !== undefined) {
+            query.isActive = isActive === 'true';
+        }
+
         const topics = await topicModel.find(query)
-            .populate("subject", "name")
-            .sort({ createdAt: 1 });
+            .populate("subject", "name description imageUrl")
+            .sort({ order: 1, createdAt: 1 });
+
+        // For each topic, get the note count
+        const topicsWithNoteCount = await Promise.all(topics.map(async (topic) => {
+            const noteCount = await noteModel.countDocuments({ topic: topic._id });
+            return {
+                ...topic.toObject(),
+                noteCount
+            };
+        }));
 
         res.status(200).json({
             success: true,
             count: topics.length,
-            data: topics
+            data: topicsWithNoteCount
         });
     } catch (err) {
         res.status(500).json({
@@ -70,20 +104,38 @@ const searchTopics = async (req, res) => {
     }
 };
 
-// get all topics for a subject
 const getTopicsBySubject = async (req, res) => {
     try {
-        console.log("calling....")
         const { subjectId } = req.params;
+        const { includeInactive } = req.query;
+
+        let query = { subject: subjectId };
+        
+        // Only show active topics unless includeInactive is true
+        if (includeInactive !== 'true') {
+            query.isActive = true;
+        }
 
         const topics = await topicModel
-            .find({ subject: subjectId })
-            .sort({ createdAt: 1 });
+            .find(query)
+            .sort({ order: 1, createdAt: 1 });
+
+        // Get note count for each topic
+        const topicsWithNoteCount = await Promise.all(topics.map(async (topic) => {
+            const noteCount = await noteModel.countDocuments({ 
+                topic: topic._id,
+                isPublished: true 
+            });
+            return {
+                ...topic.toObject(),
+                noteCount
+            };
+        }));
 
         res.status(200).json({
             success: true,
             count: topics.length,
-            data: topics
+            data: topicsWithNoteCount
         });
     } catch (err) {
         res.status(500).json({
@@ -93,10 +145,10 @@ const getTopicsBySubject = async (req, res) => {
     }
 };
 
-// Get single topic details by ID
 const getTopicDetails = async (req, res) => {
     try {
         const { topicId } = req.params;
+        const { includeNotes } = req.query;
 
         // Find topic by ID and populate subject details
         const topic = await topicModel
@@ -110,9 +162,27 @@ const getTopicDetails = async (req, res) => {
             });
         }
 
+        // Optionally include notes for this topic
+        let notes = null;
+        if (includeNotes === 'true') {
+            notes = await noteModel
+                .find({ 
+                    topic: topicId,
+                    isPublished: true 
+                })
+                .sort({ createdAt: -1 })
+                .select("title version isPublished createdAt updatedAt");
+        }
+
+        const noteCount = await noteModel.countDocuments({ topic: topicId });
+
         res.status(200).json({
             success: true,
-            data: topic
+            data: {
+                ...topic.toObject(),
+                noteCount,
+                notes: notes || undefined
+            }
         });
     } catch (err) {
         res.status(500).json({
@@ -122,7 +192,6 @@ const getTopicDetails = async (req, res) => {
     }
 };
 
-// Update topic by ID
 const updateTopic = async (req, res) => {
     try {
         const { topicId } = req.params;
@@ -152,14 +221,12 @@ const updateTopic = async (req, res) => {
         }
 
         // Update topic with new data
-        // This allows updating any fields: name, content, summary, importantNotes, 
-        // readTime, order, isActive, imageUrl, resources
         const updatedTopic = await topicModel.findByIdAndUpdate(
             topicId,
             updateData,
             { 
-                new: true,           // Return the updated document
-                runValidators: true  // Run model validations
+                new: true,
+                runValidators: true
             }
         ).populate("subject", "name description");
 
@@ -169,6 +236,12 @@ const updateTopic = async (req, res) => {
             data: updatedTopic
         });
     } catch (err) {
+        if (err.code === 11000) {
+            return res.status(400).json({
+                success: false,
+                message: "A topic with this name already exists under the same subject"
+            });
+        }
         res.status(500).json({
             success: false,
             message: err.message
@@ -176,7 +249,6 @@ const updateTopic = async (req, res) => {
     }
 };
 
-// Alternative: Partial update for specific fields only
 const patchTopic = async (req, res) => {
     try {
         const { topicId } = req.params;
@@ -203,7 +275,8 @@ const patchTopic = async (req, res) => {
         }
 
         // Update only provided fields
-        Object.keys(updateData).forEach(key => {
+        const allowedFields = ['name', 'subject', 'isActive', 'imageUrl', 'summary', 'order', 'readTime'];
+        allowedFields.forEach(key => {
             if (updateData[key] !== undefined) {
                 existingTopic[key] = updateData[key];
             }
@@ -217,6 +290,12 @@ const patchTopic = async (req, res) => {
             data: existingTopic
         });
     } catch (err) {
+        if (err.code === 11000) {
+            return res.status(400).json({
+                success: false,
+                message: "A topic with this name already exists under the same subject"
+            });
+        }
         res.status(500).json({
             success: false,
             message: err.message
@@ -224,12 +303,12 @@ const patchTopic = async (req, res) => {
     }
 };
 
-// Delete topic
 const deleteTopic = async (req, res) => {
     try {
         const { topicId } = req.params;
+        const { cascadeDeleteNotes } = req.query;
 
-        const topic = await topicModel.findByIdAndDelete(topicId);
+        const topic = await topicModel.findById(topicId);
         
         if (!topic) {
             return res.status(404).json({
@@ -238,10 +317,34 @@ const deleteTopic = async (req, res) => {
             });
         }
 
+        // Check if topic has associated notes
+        const noteCount = await noteModel.countDocuments({ topic: topicId });
+
+        if (noteCount > 0 && cascadeDeleteNotes !== 'true') {
+            return res.status(400).json({
+                success: false,
+                message: `This topic has ${noteCount} associated notes. Use cascadeDeleteNotes=true to delete them as well.`,
+                noteCount
+            });
+        }
+
+        // Delete associated notes if cascadeDeleteNotes is true
+        if (cascadeDeleteNotes === 'true' && noteCount > 0) {
+            await noteModel.deleteMany({ topic: topicId });
+        }
+
+        // Delete the topic
+        await topicModel.findByIdAndDelete(topicId);
+
         res.status(200).json({
             success: true,
-            message: "Topic deleted successfully",
-            data: topic
+            message: cascadeDeleteNotes === 'true' && noteCount > 0 
+                ? `Topic and ${noteCount} associated notes deleted successfully`
+                : "Topic deleted successfully",
+            data: {
+                deletedTopic: topic,
+                deletedNotesCount: cascadeDeleteNotes === 'true' ? noteCount : 0
+            }
         });
     } catch (err) {
         res.status(500).json({
@@ -251,7 +354,6 @@ const deleteTopic = async (req, res) => {
     }
 };
 
-// Bulk update topics order
 const updateTopicsOrder = async (req, res) => {
     try {
         const { topics } = req.body; // Array of { id, order }
@@ -282,15 +384,27 @@ const updateTopicsOrder = async (req, res) => {
     }
 };
 
-// Get topics with pagination
 const getTopicsWithPagination = async (req, res) => {
     try {
         const { subjectId } = req.params;
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
         const skip = (page - 1) * limit;
+        const { includeInactive, search } = req.query;
 
-        const query = subjectId ? { subject: subjectId } : {};
+        let query = {};
+        
+        if (subjectId) {
+            query.subject = subjectId;
+        }
+        
+        if (includeInactive !== 'true') {
+            query.isActive = true;
+        }
+
+        if (search) {
+            query.name = { $regex: search, $options: "i" };
+        }
 
         const topics = await topicModel
             .find(query)
@@ -299,11 +413,23 @@ const getTopicsWithPagination = async (req, res) => {
             .limit(limit)
             .populate("subject", "name");
 
+        // Get note counts for each topic
+        const topicsWithDetails = await Promise.all(topics.map(async (topic) => {
+            const noteCount = await noteModel.countDocuments({ 
+                topic: topic._id,
+                isPublished: true 
+            });
+            return {
+                ...topic.toObject(),
+                noteCount
+            };
+        }));
+
         const total = await topicModel.countDocuments(query);
 
         res.status(200).json({
             success: true,
-            data: topics,
+            data: topicsWithDetails,
             pagination: {
                 currentPage: page,
                 totalPages: Math.ceil(total / limit),
@@ -319,14 +445,54 @@ const getTopicsWithPagination = async (req, res) => {
     }
 };
 
+// New: Get topic statistics
+const getTopicStatistics = async (req, res) => {
+    try {
+        const { topicId } = req.params;
+
+        const topic = await topicModel.findById(topicId);
+        if (!topic) {
+            return res.status(404).json({
+                success: false,
+                message: "Topic not found"
+            });
+        }
+
+        const totalNotes = await noteModel.countDocuments({ topic: topicId });
+        const publishedNotes = await noteModel.countDocuments({ topic: topicId, isPublished: true });
+        const totalVersions = await noteModel.aggregate([
+            { $match: { topic: topic._id } },
+            { $group: { _id: null, total: { $sum: "$version" } } }
+        ]);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                topicId: topic._id,
+                topicName: topic.name,
+                totalNotes,
+                publishedNotes,
+                draftNotes: totalNotes - publishedNotes,
+                totalVersions: totalVersions[0]?.total || 0
+            }
+        });
+    } catch (err) {
+        res.status(500).json({
+            success: false,
+            message: err.message
+        });
+    }
+};
+
 module.exports = {
     createTopic,
     searchTopics,
     getTopicsBySubject,
-    getTopicDetails,      // Get single topic details
-    updateTopic,          // Full update (PUT)
-    patchTopic,           // Partial update (PATCH)
-    deleteTopic,          // Delete topic
-    updateTopicsOrder,    // Bulk order update
-    getTopicsWithPagination  // Paginated topics
+    getTopicDetails,
+    updateTopic,
+    patchTopic,
+    deleteTopic,
+    updateTopicsOrder,
+    getTopicsWithPagination,
+    getTopicStatistics  // New exported function
 };
