@@ -21,16 +21,16 @@ const authMiddleware = require("../middleware/auth.middleware");
 
 // Note routes
 router.post("/", authMiddleware.adminMiddleware,createNote);                           // Create a new note
-router.get("/",authMiddleware.adminMiddleware, getNotes);                              // Get all notes with filtering
-router.get("/topic/:topicId",authMiddleware.adminMiddleware, getNotesByTopic);         // Get all notes for a specific topic
-router.get("/search/topic/:topicId",authMiddleware.adminMiddleware, searchNotesInTopic); // Search notes within a topic
-router.post("/bulk",authMiddleware.adminMiddleware, bulkCreateNotes);                  // Bulk create notes
-router.get("/:noteId",authMiddleware.adminMiddleware, getNoteById);                    // Get single note by ID
+router.get("/",authMiddleware.authMiddleware, getNotes);                              // Get all notes with filtering
+router.get("/topic/:topicId",authMiddleware.authMiddleware, getNotesByTopic);         // Get all notes for a specific topic
+router.get("/search/topic/:topicId",authMiddleware.authMiddleware, searchNotesInTopic); // Search notes within a topic
+router.post("/bulk",authMiddleware.authMiddleware, bulkCreateNotes);                  // Bulk create notes
+router.get("/:noteId",authMiddleware.authMiddleware, getNoteById);                    // Get single note by ID
 router.put("/:noteId",authMiddleware.adminMiddleware,authMiddleware.adminMiddleware, updateNote);                     // Full update of a note
 router.patch("/:noteId",authMiddleware.adminMiddleware,authMiddleware.adminMiddleware, patchNote);                    // Partial update of a note
 router.delete("/:noteId",authMiddleware.adminMiddleware, deleteNote);                  // Delete a note
 router.patch("/:noteId/toggle-publish",authMiddleware.adminMiddleware, togglePublishStatus); // Toggle publish status
-router.get("/:noteId/versions",authMiddleware.adminMiddleware, getNoteVersions);       // Get note version history
+router.get("/:noteId/versions",authMiddleware.authMiddleware, getNoteVersions);       // Get note version history
 router.post("/:noteId/resources",authMiddleware.adminMiddleware, addResourceToNote);   // Add resource to note
 router.delete("/:noteId/resources/:resourceIndex",authMiddleware.adminMiddleware, removeResourceFromNote); // Remove resource from note
 
