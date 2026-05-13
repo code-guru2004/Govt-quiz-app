@@ -3,19 +3,45 @@ const router = express.Router();
 
 const authMiddleware = require("../middleware/auth.middleware");
 const topicController = require("../controllers/topic.controller");
-// search topics by name - for everyone
-router.get("/search",authMiddleware.authMiddleware, topicController.searchTopics);
-// create topic - only admin
-router.post("/create",authMiddleware.adminMiddleware, topicController.createTopic);
-// get all topics of a subject - for everyone
-router.get("/subject/:subjectId",authMiddleware.authMiddleware, topicController.getTopicsBySubject);
 
-router.get('/:topicId', authMiddleware.authMiddleware, topicController.getTopicDetails);
-router.put('/:topicId', authMiddleware.authMiddleware, topicController.updateTopic);
-router.patch('/:topicId', authMiddleware.authMiddleware, topicController.patchTopic);
-router.delete('/:topicId', authMiddleware.authMiddleware, topicController.deleteTopic);
-router.put('/order/bulk', authMiddleware.authMiddleware, topicController.updateTopicsOrder);
-router.get('/subject/:subjectId/paginated', authMiddleware.authMiddleware, topicController.getTopicsWithPagination);
+// ==================== PUBLIC/PROTECTED ROUTES ====================
 
+// Search topics with advanced filtering
+router.get("/search", authMiddleware.authMiddleware, topicController.searchTopics);
+
+// Get topics by subject
+router.get("/subject/:subjectId", authMiddleware.authMiddleware, topicController.getTopicsBySubject);
+
+// Get topics by category
+router.get("/category/:categoryId", authMiddleware.authMiddleware, topicController.getTopicsByCategory);
+
+// Get topics with pagination
+router.get("/subject/:subjectId/paginated", authMiddleware.authMiddleware, topicController.getTopicsWithPagination);
+
+// Get topic details by ID
+router.get("/:topicId", authMiddleware.authMiddleware, topicController.getTopicDetails);
+
+// Get topic statistics
+router.get("/:topicId/statistics", authMiddleware.adminMiddleware, topicController.getTopicStatistics);
+
+// ==================== ADMIN ONLY ROUTES ====================
+
+// Create topic
+router.post("/create", authMiddleware.adminMiddleware, topicController.createTopic);
+
+// Update topic (full update)
+router.put("/:topicId", authMiddleware.adminMiddleware, topicController.updateTopic);
+
+// Patch topic (partial update)
+router.patch("/:topicId", authMiddleware.adminMiddleware, topicController.patchTopic);
+
+// Delete topic (soft or hard delete)
+router.delete("/:topicId", authMiddleware.adminMiddleware, topicController.deleteTopic);
+
+// Update topics order
+router.put("/order/bulk", authMiddleware.adminMiddleware, topicController.updateTopicsOrder);
+
+// Bulk update topics status
+router.patch("/bulk/status", authMiddleware.adminMiddleware, topicController.bulkUpdateTopicsStatus);
 
 module.exports = router;
