@@ -271,10 +271,13 @@ const startTest = async (req, res) => {
     const { testId } = req.params;
     const userId = req.user.id;
     const now = new Date();
+    
+    // 🔥 Get device info from request body
+    const { ipAddress, deviceInfo } = req.body;
 
     const test = await Test.findById(testId)
-      .populate("questions", "_id marks")  // Include marks field
-      .populate("sections.questions", "_id marks")  // Include marks for section questions
+      .populate("questions", "_id marks")
+      .populate("sections.questions", "_id marks")
       .lean();
 
     if (!test) {
@@ -341,7 +344,7 @@ const startTest = async (req, res) => {
     }
 
     let totalQuestions = 0;
-    let totalMarks = 0;  // Initialize total marks
+    let totalMarks = 0;
     let questions = [];
     let sections = [];
     let sectionRemainingTime = [];
@@ -350,9 +353,8 @@ const startTest = async (req, res) => {
     // ✅ FLAT TEST
     // =========================
     if (!test.hasSections) {
-      // Calculate total marks from questions
       for (const q of test.questions) {
-        const questionMarks = q.marks || 1; // Default to 1 if marks not set
+        const questionMarks = q.marks || 1;
         totalMarks += questionMarks;
       }
       
@@ -374,10 +376,9 @@ const startTest = async (req, res) => {
           throw new Error(`Invalid duration in section ${sec.title}`);
         }
         
-        // Calculate section total marks
         let sectionTotalMarks = 0;
         for (const q of sec.questions) {
-          const questionMarks = q.marks || 1; // Default to 1 if marks not set
+          const questionMarks = q.marks || 1;
           sectionTotalMarks += questionMarks;
         }
         
@@ -394,7 +395,7 @@ const startTest = async (req, res) => {
           sectionIndex: index,
           sectionTitle: sec.title,
           sectionDuration: secDuration,
-          totalMarks: sectionTotalMarks,  // Store section total marks
+          totalMarks: sectionTotalMarks,
           sectionLocked: false,
           questions: sec.questions.map((q) => ({
             questionId: q._id
@@ -411,13 +412,33 @@ const startTest = async (req, res) => {
       sections: test.hasSections ? sections : [],
       sectionRemainingTime: test.hasSections ? sectionRemainingTime : [],
       totalQuestions,
-      totalMarks,  // Use calculated total marks
+      totalMarks,
       negativeMarks: test.negativeMarks || 0,
       status: "in-progress",
       startedAt: now,
       lastResumedAt: now,
       currentQuestionIndex: 0,
-      currentSectionIndex: 0
+      currentSectionIndex: 0,
+      // 🔥 Add device info if provided
+      ipAddress: ipAddress || null,
+      userAgent: deviceInfo?.userAgent || null,
+      deviceInfo: deviceInfo ? {
+        browser: deviceInfo.browser || null,
+        browserVersion: deviceInfo.browserVersion || null,
+        os: deviceInfo.os || null,
+        osVersion: deviceInfo.osVersion || null,
+        deviceType: deviceInfo.deviceType || null,
+        brand: deviceInfo.brand || null,
+        model: deviceInfo.model || null
+      } : {
+        browser: null,
+        browserVersion: null,
+        os: null,
+        osVersion: null,
+        deviceType: null,
+        brand: null,
+        model: null
+      }
     };
 
     if (!test.hasSections) {
@@ -431,7 +452,7 @@ const startTest = async (req, res) => {
       msg: "Test started",
       attemptId: attempt._id,
       hasSections: attempt.hasSections,
-      totalMarks: attempt.totalMarks,  // Include in response for verification
+      totalMarks: attempt.totalMarks,
       remainingTime: attempt.hasSections
         ? attempt.sectionRemainingTime
         : attempt.remainingTime
@@ -1114,6 +1135,53 @@ const getDetailedResult = async (req, res) => {
     }
 
     // =========================
+    // 📱 DEVICE & IP INFORMATION
+    // =========================
+    const deviceInfo = {
+      ipAddress: attempt.ipAddress || null,
+      userAgent: attempt.userAgent || null,
+      deviceDetails: {
+        browser: attempt.deviceInfo?.browser || null,
+        browserVersion: attempt.deviceInfo?.browserVersion || null,
+        os: attempt.deviceInfo?.os || null,
+        osVersion: attempt.deviceInfo?.osVersion || null,
+        deviceType: attempt.deviceInfo?.deviceType || null,
+        brand: attempt.deviceInfo?.brand || null,
+        model: attempt.deviceInfo?.model || null
+      }
+    };
+
+    // =========================
+    // ⏱️ TIME INFORMATION
+    // =========================
+    const timeInfo = {
+      startedAt: attempt.startedAt,
+      submittedAt: attempt.submittedAt,
+      lastResumedAt: attempt.lastResumedAt,
+      timeTakenMinutes: attempt.timeTakenMinutes,
+      duration: attempt.duration || null,
+      remainingTime: attempt.remainingTime || null
+    };
+
+    // =========================
+    // 📊 STATISTICS
+    // =========================
+    const statistics = {
+      score: attempt.score,
+      totalMarks: attempt.totalMarks,
+      percentage: attempt.percentage,
+      correct: attempt.correctAnswers,
+      wrong: attempt.wrongAnswers,
+      unattempted: attempt.unattempted,
+      accuracy: attempt.correctAnswers + attempt.wrongAnswers === 0
+        ? 0
+        : Number(
+            ((attempt.correctAnswers / (attempt.correctAnswers + attempt.wrongAnswers)) * 100).toFixed(2)
+          ),
+      negativeMarks: attempt.negativeMarks || 0
+    };
+
+    // =========================
     // ✅ FLAT TEST
     // =========================
     if (!attempt.hasSections) {
@@ -1152,12 +1220,15 @@ const getDetailedResult = async (req, res) => {
       });
 
       return res.json({
-        score: attempt.score,
-        totalMarks: attempt.totalMarks,
-        correct: attempt.correctAnswers,
-        wrong: attempt.wrongAnswers,
-        unattempted: attempt.unattempted,
-        hasSections: attempt.hasSections,
+        attemptId: attempt._id,
+        testId: attempt.test,
+        status: attempt.status,
+        hasSections: false,
+        
+        statistics,      // 🔥 Enhanced statistics
+        deviceInfo,      // 🔥 Device information
+        timeInfo,        // 🔥 Time information
+        
         questions: detailed
       });
     }
@@ -1167,6 +1238,8 @@ const getDetailedResult = async (req, res) => {
     // =========================
     else {
       let sectionResults = [];
+      let totalSectionMarks = 0;
+      let obtainedSectionMarks = 0;
 
       for (const section of attempt.sections) {
         const questionIds = section.questions.map(q => q.questionId);
@@ -1203,22 +1276,60 @@ const getDetailedResult = async (req, res) => {
           };
         });
 
+        // Calculate section statistics
+        const sectionCorrect = detailedQuestions.filter(q => q.status === "correct").length;
+        const sectionWrong = detailedQuestions.filter(q => q.status === "wrong").length;
+        const sectionUnattempted = detailedQuestions.filter(q => q.status === "unattempted").length;
+        const sectionScore = detailedQuestions.reduce((sum, q) => sum + (q.marksObtained || 0), 0);
+        const sectionTotal = section.totalMarks || detailedQuestions.length;
+
+        totalSectionMarks += sectionTotal;
+        obtainedSectionMarks += sectionScore;
+
         sectionResults.push({
           sectionIndex: section.sectionIndex,
           sectionTitle: section.sectionTitle,
+          sectionDuration: section.sectionDuration,
           totalQuestions: section.questions.length,
+          totalMarks: sectionTotal,
+          score: section.score || sectionScore,
+          
+          sectionStatistics: {
+            correct: sectionCorrect,
+            wrong: sectionWrong,
+            unattempted: sectionUnattempted,
+            accuracy: sectionCorrect + sectionWrong === 0
+              ? 0
+              : Number(((sectionCorrect / (sectionCorrect + sectionWrong)) * 100).toFixed(2)),
+            percentage: sectionTotal === 0 ? 0 : Number(((sectionScore / sectionTotal) * 100).toFixed(2))
+          },
+          
           questions: detailedQuestions
         });
       }
 
+      // Section time info
+      const sectionTimeInfo = attempt.sectionRemainingTime?.map(section => ({
+        sectionIndex: section.sectionIndex,
+        remainingTime: section.remainingTime,
+        lastUpdatedAt: section.lastUpdatedAt
+      })) || [];
+
       return res.json({
-        score: attempt.score,
-        totalMarks: attempt.totalMarks,
-        correct: attempt.correctAnswers,
-        wrong: attempt.wrongAnswers,
-        unattempted: attempt.unattempted,
-        hasSections: attempt.hasSections,
-        sections: sectionResults
+        attemptId: attempt._id,
+        testId: attempt.test,
+        status: attempt.status,
+        hasSections: true,
+        
+        statistics,           // 🔥 Overall statistics
+        deviceInfo,           // 🔥 Device information
+        timeInfo,             // 🔥 Time information
+        
+        sections: sectionResults,
+        sectionTimeInfo,      // 🔥 Section-wise time info
+        currentSectionIndex: attempt.currentSectionIndex,
+        completedSections: attempt.completedSections,
+        sectionLocked: attempt.sectionLocked
       });
     }
 

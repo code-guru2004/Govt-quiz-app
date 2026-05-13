@@ -41,6 +41,35 @@ const getAttemptResult = async (req, res) => {
     };
 
     // =========================
+    // 📱 DEVICE & IP INFORMATION
+    // =========================
+    const deviceInfo = {
+      ipAddress: attempt.ipAddress || null,
+      userAgent: attempt.userAgent || null,
+      deviceDetails: {
+        browser: attempt.deviceInfo?.browser || null,
+        browserVersion: attempt.deviceInfo?.browserVersion || null,
+        os: attempt.deviceInfo?.os || null,
+        osVersion: attempt.deviceInfo?.osVersion || null,
+        deviceType: attempt.deviceInfo?.deviceType || null,
+        brand: attempt.deviceInfo?.brand || null,
+        model: attempt.deviceInfo?.model || null
+      }
+    };
+
+    // =========================
+    // ⏱️ TIME INFORMATION
+    // =========================
+    const timeInfo = {
+      startedAt: attempt.startedAt,
+      submittedAt: attempt.submittedAt,
+      lastResumedAt: attempt.lastResumedAt,
+      timeTakenMinutes: attempt.timeTakenMinutes,
+      duration: attempt.duration || null,
+      remainingTime: attempt.remainingTime || null
+    };
+
+    // =========================
     // ✅ FLAT TEST
     // =========================
     if (!attempt.hasSections) {
@@ -83,7 +112,11 @@ const getAttemptResult = async (req, res) => {
         attemptId: attempt._id,
         test: attempt.test,
         summary,
-        answers
+        answers,
+        deviceInfo,      // 🔥 Add device info
+        timeInfo,        // 🔥 Add time info
+        status: attempt.status,
+        hasSections: false
       });
     }
 
@@ -137,11 +170,26 @@ const getAttemptResult = async (req, res) => {
         });
       }
 
+      // Add section-wise time info
+      const sectionTimeInfo = attempt.sectionRemainingTime?.map(section => ({
+        sectionIndex: section.sectionIndex,
+        remainingTime: section.remainingTime,
+        lastUpdatedAt: section.lastUpdatedAt
+      })) || [];
+
       return res.json({
         attemptId: attempt._id,
         test: attempt.test,
         summary,
-        sections
+        sections,
+        deviceInfo,           // 🔥 Add device info
+        timeInfo,             // 🔥 Add time info
+        sectionTimeInfo,      // 🔥 Add section time info
+        status: attempt.status,
+        hasSections: true,
+        currentSectionIndex: attempt.currentSectionIndex,
+        sectionLocked: attempt.sectionLocked,
+        completedSections: attempt.completedSections
       });
     }
 

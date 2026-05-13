@@ -237,8 +237,40 @@ const attemptSchema = new mongoose.Schema(
     },
     
     deviceInfo: {
-      type: String,
-      default: null
+      browser: {
+        type: String,
+        default: null
+      },
+    
+      browserVersion: {
+        type: String,
+        default: null
+      },
+    
+      os: {
+        type: String,
+        default: null
+      },
+    
+      osVersion: {
+        type: String,
+        default: null
+      },
+    
+      deviceType: {
+        type: String,
+        default: null
+      },
+    
+      brand: {
+        type: String,
+        default: null
+      },
+    
+      model: {
+        type: String,
+        default: null
+      }
     }
   },
   { 
