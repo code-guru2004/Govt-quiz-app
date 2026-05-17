@@ -44,6 +44,9 @@ app.use("/api/questions", questionRoutes);
 app.use("/api/notes", notesRoutes);
 app.use("/api/categories", categoryRoutes);
 
+app.get("/health", (req, res) => {
+  res.send("OK");
+});
 app.get("/", (req, res) => {
   res.send("API running...");
 });
